@@ -1,0 +1,51 @@
+#!/usr/bin/env php
+<?php
+/**
+ * Builds dist/monokulo.ocmod.zip (and its .sha256) from src/: install.json
+ * at the top, then admin/, catalog/ and system/, as OpenCart 4's Extension
+ * Installer expects.
+ *
+ * The file must be called monokulo.ocmod.zip: the installer takes the
+ * extension's code, and so its folder (extension/monokulo/) and its PHP
+ * namespace, from the file name. A versioned name would install as another
+ * extension. The version is in install.json and in the release's name.
+ *
+ * Entries are sorted and dated 2026-01-01, so the same source always gives
+ * the same zip.
+ */
+$root = dirname(__DIR__);
+$src = $root . '/src';
+$dist = $root . '/dist';
+$zipPath = $dist . '/monokulo.ocmod.zip';
+
+if (!is_dir($dist)) {
+	mkdir($dist);
+}
+@unlink($zipPath);
+
+$files = [];
+$iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($src, FilesystemIterator::SKIP_DOTS));
+foreach ($iterator as $file) {
+	if ($file->isFile()) {
+		$files[] = substr($file->getPathname(), strlen($src) + 1);
+	}
+}
+sort($files, SORT_STRING);
+
+$zip = new ZipArchive();
+if ($zip->open($zipPath, ZipArchive::CREATE | ZipArchive::EXCL) !== true) {
+	fwrite(STDERR, "cannot create $zipPath\n");
+	exit(1);
+}
+$time = gmmktime(0, 0, 0, 1, 1, 2026);
+foreach ($files as $name) {
+	$zip->addFile($src . '/' . $name, $name);
+	$zip->setMtimeName($name, $time);
+	$zip->setCompressionName($name, ZipArchive::CM_DEFLATE);
+	$zip->setExternalAttributesName($name, ZipArchive::OPSYS_UNIX, 0100644 << 16);
+}
+$zip->close();
+
+$hash = hash_file('sha256', $zipPath);
+file_put_contents($zipPath . '.sha256', $hash . "  monokulo.ocmod.zip\n");
+printf("dist/monokulo.ocmod.zip (%s, %d files): %s\n", trim((string)file_get_contents($root . '/VERSION')), count($files), $hash);

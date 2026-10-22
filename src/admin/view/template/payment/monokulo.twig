@@ -1,0 +1,129 @@
+{{ header }}{{ column_left }}
+<div id="content">
+  <div class="page-header">
+    <div class="container-fluid">
+      <div class="float-end">
+        <button type="submit" form="form-payment" data-bs-toggle="tooltip" title="{{ button_save }}" class="btn btn-primary"><i class="fa-solid fa-save"></i></button>
+        <a href="{{ back }}" data-bs-toggle="tooltip" title="{{ button_back }}" class="btn btn-light"><i class="fa-solid fa-reply"></i></a></div>
+      <h1>{{ heading_title }}</h1>
+      <ol class="breadcrumb">
+        {% for breadcrumb in breadcrumbs %}
+          <li class="breadcrumb-item"><a href="{{ breadcrumb.href }}">{{ breadcrumb.text }}</a></li>
+        {% endfor %}
+      </ol>
+    </div>
+  </div>
+  <div class="container-fluid">
+    {% if success %}
+      <div class="alert alert-success alert-dismissible" id="monokulo-connected"><i class="fa-solid fa-circle-check"></i> {{ success }} <button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
+    {% endif %}
+    {% if error %}
+      <div class="alert alert-danger alert-dismissible" id="monokulo-connect-error"><i class="fa-solid fa-circle-exclamation"></i> {{ error }} <button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
+    {% endif %}
+    <form id="form-payment" action="{{ save }}" method="post" data-oc-toggle="ajax">
+      <div class="card mb-3">
+        <div class="card-header"><i class="fa-solid fa-pencil"></i> {{ text_edit }}</div>
+        <div class="card-body">
+          <div class="row mb-3 required">
+            <label for="input-address" class="col-sm-2 col-form-label">{{ entry_address }}</label>
+            <div class="col-sm-10">
+              <input type="url" name="payment_monokulo_address" value="{{ payment_monokulo_address }}" placeholder="https://pay.example.com" id="input-address" class="form-control"/>
+              <div id="error-address" class="invalid-feedback"></div>
+              <div class="form-text">{{ help_address }}</div>
+            </div>
+          </div>
+          <div class="row mb-3">
+            <label for="input-geo-zone" class="col-sm-2 col-form-label">{{ entry_geo_zone }}</label>
+            <div class="col-sm-10">
+              <select name="payment_monokulo_geo_zone_id" id="input-geo-zone" class="form-select">
+                <option value="0">{{ text_all_zones }}</option>
+                {% for geo_zone in geo_zones %}
+                  <option value="{{ geo_zone.geo_zone_id }}"{% if geo_zone.geo_zone_id == payment_monokulo_geo_zone_id %} selected{% endif %}>{{ geo_zone.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+          <div class="row mb-3">
+            <label for="input-forward-errors" class="col-sm-2 col-form-label">{{ entry_forward_errors }}</label>
+            <div class="col-sm-10">
+              <div class="form-check form-switch form-switch-lg">
+                <input type="hidden" name="payment_monokulo_forward_errors" value="0"/>
+                <input type="checkbox" name="payment_monokulo_forward_errors" value="1" id="input-forward-errors" class="form-check-input"{% if payment_monokulo_forward_errors %} checked{% endif %}/>
+              </div>
+              <div class="form-text">{{ help_forward_errors }}</div>
+            </div>
+          </div>
+          <div class="row mb-3">
+            <label for="input-status" class="col-sm-2 col-form-label">{{ entry_status }}</label>
+            <div class="col-sm-10">
+              <div class="form-check form-switch form-switch-lg">
+                <input type="hidden" name="payment_monokulo_status" value="0"/>
+                <input type="checkbox" name="payment_monokulo_status" value="1" id="input-status" class="form-check-input"{% if payment_monokulo_status %} checked{% endif %}/>
+              </div>
+            </div>
+          </div>
+          <div class="row mb-3">
+            <label for="input-sort-order" class="col-sm-2 col-form-label">{{ entry_sort_order }}</label>
+            <div class="col-sm-10">
+              <input type="text" name="payment_monokulo_sort_order" value="{{ payment_monokulo_sort_order }}" placeholder="{{ entry_sort_order }}" id="input-sort-order" class="form-control"/>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="card mb-3">
+        <div class="card-header"><i class="fa-solid fa-list-check"></i> {{ text_order_statuses }}</div>
+        <div class="card-body">
+          <p class="form-text">{{ text_order_statuses_help }}</p>
+          {% for status in statuses %}
+            <div class="row mb-3 required">
+              <label for="input-{{ status.key }}-status" class="col-sm-2 col-form-label">{{ status.entry }}</label>
+              <div class="col-sm-10">
+                <select name="{{ status.name }}" id="input-{{ status.key }}-status" class="form-select">
+                  {% for order_status in order_statuses %}
+                    <option value="{{ order_status.order_status_id }}"{% if order_status.order_status_id == status.value %} selected{% endif %}>{{ order_status.name }}</option>
+                  {% endfor %}
+                </select>
+                <div id="error-{{ status.key }}-status" class="invalid-feedback"></div>
+                <div class="form-text">{{ status.help }}</div>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    </form>
+    <div class="card mb-3">
+      <div class="card-header"><i class="fa-solid fa-plug"></i> {{ text_stores }}</div>
+      <div class="card-body">
+        <p class="form-text">{{ text_stores_help }}</p>
+        {% if not can_connect %}
+          <p class="text-warning">{{ text_address_first }}</p>
+        {% endif %}
+        <div class="table-responsive">
+          <table class="table table-bordered">
+            <tbody>
+              {% for store in stores %}
+                <tr id="store-{{ store.host }}">
+                  <td><strong>{{ store.name }}</strong><br/><span class="text-muted">{{ store.url }}</span></td>
+                  <td>
+                    {% if store.connected %}
+                      {{ store.connected }}
+                      {% if store.reconnect %}<div class="text-danger">{{ text_reconnect_needed }}</div>{% endif %}
+                    {% else %}
+                      {{ text_not_connected }}
+                    {% endif %}
+                  </td>
+                  <td class="text-end">
+                    {% if can_connect %}
+                      <a href="{{ store.connect }}" class="btn {% if store.connected and not store.reconnect %}btn-light{% else %}btn-primary{% endif %}">{% if store.connected %}{{ button_reconnect }}{% else %}{{ button_connect }}{% endif %}</a>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{{ footer }}

@@ -1,0 +1,63 @@
+#!/bin/sh
+# Runs the extension's tests in the OpenCart container (docker/compose.yaml),
+# as your own user so files it writes in the repository stay yours.
+#
+#   scripts/test up                 start OpenCart (PHP_VERSION=8.1|8.4|8.5) and install it
+#   scripts/test install            build the zip and install it through the Extension Installer
+#   scripts/test unit|catalog|admin|http|smoke [phpunit args]
+#   scripts/test all                install, then every suite but smoke
+#   scripts/test down               stop and remove the containers
+#
+# Coverage: COVERAGE=1 writes coverage/<suite>.cov (pcov), merged by
+# scripts/coverage.
+set -eu
+cd "$(dirname "$0")/.."
+
+compose() {
+	docker compose -f docker/compose.yaml "$@"
+}
+
+run() {
+	compose exec -T --user "$(id -u):$(id -g)" -e HOME=/tmp -e MONOKULO_URL="${MONOKULO_URL:-}" -w /repo opencart "$@"
+}
+
+suite() {
+	name=$1
+	shift
+	if [ "${COVERAGE:-}" = 1 ]; then
+		mkdir -p coverage
+		run php -d pcov.enabled=1 vendor/bin/phpunit --testsuite "$name" --coverage-php "coverage/$name.cov" "$@"
+	else
+		run vendor/bin/phpunit --testsuite "$name" "$@"
+	fi
+}
+
+case "${1:-all}" in
+up)
+	compose up -d --build --wait
+	compose exec -T opencart oc-setup
+	run composer install --no-interaction --no-progress
+	;;
+install)
+	run php scripts/build-zip
+	suite http --group installer
+	;;
+down)
+	compose down -v
+	;;
+all)
+	"$0" install
+	for name in unit catalog admin http; do
+		suite "$name" --exclude-group installer
+	done
+	;;
+unit | catalog | admin | http | smoke)
+	name=$1
+	shift
+	suite "$name" "$@"
+	;;
+*)
+	echo "usage: scripts/test up|install|unit|catalog|admin|http|smoke|all|down" >&2
+	exit 2
+	;;
+esac

@@ -1,0 +1,42 @@
+# OpenCart 4.1.0.4 with this extension's repository mounted at /repo, on the
+# host's network: the shop is http://localhost:8090/ from the browser, from a
+# Monokulo on this machine and from the tests alike. Monokulo only sends its
+# connect flow back to an https address or to localhost, and the shop's
+# webhook address is built from the same host, so one address for everyone
+# is what makes the smoke test work. (Linux only: Docker Desktop's host
+# networking differs.)
+name: monokulo-opencart
+
+services:
+  db:
+    image: mariadb:11.4
+    network_mode: host
+    command: ["--port=${DB_PORT:-33061}", "--bind-address=127.0.0.1"]
+    environment:
+      MARIADB_DATABASE: opencart
+      MARIADB_USER: opencart
+      MARIADB_PASSWORD: opencart
+      MARIADB_ROOT_PASSWORD: opencart-root
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 2s
+      retries: 60
+
+  opencart:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        PHP_VERSION: ${PHP_VERSION:-8.4}
+    image: monokulo-opencart:php${PHP_VERSION:-8.4}
+    network_mode: host
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_PORT: ${DB_PORT:-33061}
+      OC_URL: http://localhost:8090/
+    volumes:
+      - ..:/repo

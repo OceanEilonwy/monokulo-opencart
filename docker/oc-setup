@@ -1,0 +1,51 @@
+#!/bin/sh
+# Installs OpenCart into the database once (OpenCart's own CLI installer),
+# the way a merchant's first visit to /install would. Safe to run again.
+set -eu
+
+: "${OC_URL:=http://localhost:8090/}"
+: "${DB_HOST:=127.0.0.1}"
+: "${DB_PORT:=33061}"
+: "${DB_NAME:=opencart}"
+: "${DB_USER:=opencart}"
+: "${DB_PASSWORD:=opencart}"
+: "${OC_ADMIN_USER:=admin}"
+: "${OC_ADMIN_PASSWORD:=admin-password-1}"
+
+cd /var/www/html
+
+for i in $(seq 1 60); do
+	if mariadb-admin ping -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" -p"$DB_PASSWORD" --silent 2>/dev/null; then
+		break
+	fi
+	sleep 1
+done
+
+if grep -q "DIR_APPLICATION" config.php; then
+	echo "OpenCart is already installed."
+	exit 0
+fi
+
+php install/cli_install.php install \
+	--username "$OC_ADMIN_USER" \
+	--password "$OC_ADMIN_PASSWORD" \
+	--email admin@example.test \
+	--http_server "$OC_URL" \
+	--language en-gb \
+	--db_driver mysqli \
+	--db_hostname "$DB_HOST" \
+	--db_username "$DB_USER" \
+	--db_password "$DB_PASSWORD" \
+	--db_database "$DB_NAME" \
+	--db_port "$DB_PORT" \
+	--db_prefix oc_
+
+# A real shop removes the installer afterwards; so does this one.
+rm -rf install
+
+# No mail server here: OpenCart sends no emails rather than failing to.
+mariadb -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" \
+	-e "UPDATE oc_setting SET value = '' WHERE store_id = 0 AND \`key\` = 'config_mail_engine'"
+
+chown -R www-data:www-data /var/www/html
+echo "OpenCart installed at $OC_URL"
