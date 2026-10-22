@@ -47,6 +47,15 @@ rm -rf install
 mariadb -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" \
 	-e "UPDATE oc_setting SET value = '' WHERE store_id = 0 AND \`key\` = 'config_mail_engine'"
 
+# No live exchange rates: OpenCart fetches them from the ECB whenever any
+# settings are saved (events admin_currency_*) and daily (cron), which made
+# currency conversions change from run to run. Tests reach no internet.
+mariadb -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" -e "
+	UPDATE oc_setting SET value = '0' WHERE store_id = 0 AND \`key\` = 'config_currency_auto';
+	UPDATE oc_setting SET value = '' WHERE store_id = 0 AND \`key\` = 'config_currency_engine';
+	UPDATE oc_event SET status = 0 WHERE code LIKE 'admin_currency_%';
+	UPDATE oc_cron SET status = 0 WHERE code = 'currency';"
+
 chown -R www-data:www-data /var/www/html
 # The tests boot OpenCart in-process as your own user: let them write its
 # cache, logs and sessions too.

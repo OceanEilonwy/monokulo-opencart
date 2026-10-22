@@ -15,6 +15,9 @@ abstract class ShopTestCase extends TestCase {
 	public const HOST = 'localhost:8090';
 	public const SECOND_HOST = '127.0.0.1:8090';
 
+	/** Exchange rates the tests run with, against the default currency (USD). */
+	private const RATES = ['USD' => '1.00000000', 'EUR' => '0.89015489', 'GBP' => '0.74617233'];
+
 	/** @var 'catalog'|'admin' */
 	protected const SIDE = 'catalog';
 
@@ -39,6 +42,10 @@ abstract class ShopTestCase extends TestCase {
 		$this->db()->query("DELETE FROM `" . DB_PREFIX . "monokulo_connect_nonce`");
 		$this->db()->query("DELETE FROM `" . DB_PREFIX . "monokulo_order`");
 		$this->db()->query("DELETE FROM `" . DB_PREFIX . "monokulo_event`");
+		// Fixed exchange rates (OpenCart's sample data), whatever a live update did.
+		foreach (self::RATES as $code => $value) {
+			$this->db()->query("UPDATE `" . DB_PREFIX . "currency` SET `value` = " . $value . " WHERE `code` = '" . $code . "'");
+		}
 		$this->setting('payment_monokulo_status', '1');
 		$this->setting('payment_monokulo_address', self::$monokulo->url);
 		$this->setting('payment_monokulo_forward_errors', '0');

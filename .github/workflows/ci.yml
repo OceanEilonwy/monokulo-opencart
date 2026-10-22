@@ -80,10 +80,15 @@ jobs:
           path: |
             dist/monokulo.ocmod.zip
             dist/monokulo.ocmod.zip.sha256
+      # Apache's error.log in the php image is a link to /dev/stderr, which a
+      # tail inside the container waits on for ever: Apache's log is the
+      # container's own output (docker compose logs). Every command is bounded.
       - name: OpenCart's and the extension's logs
         if: failure()
+        timeout-minutes: 3
         run: |
-          docker compose -f docker/compose.yaml exec -T opencart sh -c 'tail -n 100 /var/www/html/system/storage/logs/*.log; tail -n 100 /var/log/apache2/error.log' || true
+          timeout 60 docker compose -f docker/compose.yaml exec -T opencart sh -c 'tail -n 100 /var/www/html/system/storage/logs/*.log' || true
+          timeout 60 docker compose -f docker/compose.yaml logs --no-color --tail 200 opencart || true
 
   vectors:
     name: Webhook vectors match the pinned Monokulo
