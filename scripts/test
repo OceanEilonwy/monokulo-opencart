@@ -8,8 +8,10 @@
 #   scripts/test all                install, then every suite but smoke
 #   scripts/test down               stop and remove the containers
 #
-# Coverage: COVERAGE=1 writes coverage/<suite>.cov (pcov), merged by
-# scripts/coverage.
+# Coverage: COVERAGE=1 has each suite write coverage/raw/<suite>.cov (pcov)
+# and `all` merge them into coverage/summary.txt and coverage/html/. The
+# http suite runs the extension inside Apache, so only the in-process
+# suites (unit, catalog, admin) count.
 set -eu
 cd "$(dirname "$0")/.."
 
@@ -18,15 +20,17 @@ compose() {
 }
 
 run() {
-	compose exec -T --user "$(id -u):$(id -g)" -e HOME=/tmp -e MONOKULO_URL="${MONOKULO_URL:-}" -w /repo opencart "$@"
+	# umask 0: files the tests make in the shop (its log, cache) stay writable
+	# by Apache, as Apache's stay writable by the tests.
+	compose exec -T --user "$(id -u):$(id -g)" -e HOME=/tmp -e MONOKULO_URL="${MONOKULO_URL:-}" -w /repo opencart sh -c 'umask 0000 && exec "$@"' sh "$@"
 }
 
 suite() {
 	name=$1
 	shift
 	if [ "${COVERAGE:-}" = 1 ]; then
-		mkdir -p coverage
-		run php -d pcov.enabled=1 vendor/bin/phpunit --testsuite "$name" --coverage-php "coverage/$name.cov" "$@"
+		mkdir -p coverage/raw
+		run php -d pcov.enabled=1 vendor/bin/phpunit --testsuite "$name" --coverage-php "coverage/raw/$name.cov" "$@"
 	else
 		run vendor/bin/phpunit --testsuite "$name" "$@"
 	fi
@@ -53,9 +57,15 @@ down)
 	;;
 all)
 	"$0" install
-	for name in unit catalog admin http; do
-		suite "$name" --exclude-group installer
+	rm -rf coverage
+	for name in unit catalog admin; do
+		suite "$name"
 	done
+	COVERAGE='' suite http --exclude-group installer
+	if [ "${COVERAGE:-}" = 1 ]; then
+		run vendor/bin/phpcov merge --text coverage/summary.txt --html coverage/html coverage/raw > /dev/null
+		cat coverage/summary.txt
+	fi
 	;;
 unit | catalog | admin | http | smoke)
 	name=$1
