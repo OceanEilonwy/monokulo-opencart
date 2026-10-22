@@ -36,6 +36,7 @@ abstract class ShopTestCase extends TestCase {
 		}
 		$this->db()->query('START TRANSACTION');
 		$this->db()->query("DELETE FROM `" . DB_PREFIX . "monokulo_connection`");
+		$this->db()->query("DELETE FROM `" . DB_PREFIX . "monokulo_connect_nonce`");
 		$this->setting('payment_monokulo_status', '1');
 		$this->setting('payment_monokulo_address', self::$monokulo->url);
 		$this->setting('payment_monokulo_forward_errors', '0');

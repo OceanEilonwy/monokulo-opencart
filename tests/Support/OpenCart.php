@@ -81,7 +81,9 @@ final class OpenCart {
 			throw $returned;
 		}
 		$response = $registry->get('response');
-		$headers = (fn() => $this->headers)->call($response);
+		// Response::output() sends the headers only along with a body, so a
+		// response without one sends none: report what a browser would get.
+		$headers = $response->getOutput() !== '' ? (fn() => $this->headers)->call($response) : [];
 
 		return [
 			'output'   => $response->getOutput(),

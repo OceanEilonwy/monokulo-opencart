@@ -153,7 +153,7 @@ class Monokulo extends \Opencart\System\Engine\Controller {
 		$back = $this->url->link('extension/monokulo/payment/monokulo', $token, true);
 
 		if (!$this->user->hasPermission('modify', 'extension/monokulo/payment/monokulo')) {
-			$this->response->addHeader('Location: ' . $back . '&monokulo_connect_error=permission');
+			$this->redirect($back . '&monokulo_connect_error=permission');
 
 			return;
 		}
@@ -169,7 +169,7 @@ class Monokulo extends \Opencart\System\Engine\Controller {
 		}
 
 		if ($address === '' || !$store) {
-			$this->response->addHeader('Location: ' . $back . '&monokulo_connect_error=address');
+			$this->redirect($back . '&monokulo_connect_error=address');
 
 			return;
 		}
@@ -177,7 +177,7 @@ class Monokulo extends \Opencart\System\Engine\Controller {
 		$nonce = (new Repository($this->db, DB_PREFIX))->createNonce($store_id, ConnectLink::host($store['url']), $back, time());
 		$return_url = $store['url'] . 'index.php?route=extension/monokulo/payment/monokulo.connect';
 
-		$this->response->addHeader('Location: ' . ConnectLink::start($address, $store['url'], $return_url, $nonce));
+		$this->redirect(ConnectLink::start($address, $store['url'], $return_url, $nonce));
 	}
 
 	/**
@@ -224,5 +224,15 @@ class Monokulo extends \Opencart\System\Engine\Controller {
 		}
 
 		return $stores;
+	}
+
+	/**
+	 * Sends the browser to `url`. OpenCart sends a response's headers only
+	 * with a body (and its own redirect() exits), so the redirect carries a
+	 * link too.
+	 */
+	private function redirect(string $url): void {
+		$this->response->addHeader('Location: ' . $url);
+		$this->response->setOutput('<a href="' . htmlspecialchars($url, ENT_QUOTES, 'UTF-8') . '">' . htmlspecialchars($url, ENT_QUOTES, 'UTF-8') . '</a>');
 	}
 }

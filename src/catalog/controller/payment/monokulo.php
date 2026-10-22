@@ -172,7 +172,7 @@ class Monokulo extends \Opencart\System\Engine\Controller {
 			$result = $this->finishConnect($host);
 		}
 
-		$this->response->addHeader('Location: ' . $attempt['admin_return'] . (str_contains($attempt['admin_return'], '?') ? '&' : '?') . $result);
+		$this->redirect($attempt['admin_return'] . (str_contains($attempt['admin_return'], '?') ? '&' : '?') . $result);
 	}
 
 	/** Redeems the connect token; the query string telling the admin page how it went. */
@@ -217,6 +217,16 @@ class Monokulo extends \Opencart\System\Engine\Controller {
 		}
 
 		return $this->logger;
+	}
+
+	/**
+	 * Sends the browser to `url`. OpenCart sends a response's headers only
+	 * with a body (and its own redirect() exits), so the redirect carries a
+	 * link too.
+	 */
+	private function redirect(string $url): void {
+		$this->response->addHeader('Location: ' . $url);
+		$this->response->setOutput('<a href="' . htmlspecialchars($url, ENT_QUOTES, 'UTF-8') . '">' . htmlspecialchars($url, ENT_QUOTES, 'UTF-8') . '</a>');
 	}
 
 	/** Sends this request's warnings and errors to Monokulo, when the merchant turned that on. */
