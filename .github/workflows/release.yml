@@ -1,0 +1,49 @@
+# A version tag (v0.1.0) publishes a GitHub release with the extension:
+# monokulo.ocmod.zip and its .sha256. The zip is installed through
+# OpenCart's Extension Installer and the tests run against it first.
+#
+# The file is monokulo.ocmod.zip on purpose, not a versioned name: OpenCart
+# names the extension's folder and PHP namespace after the file, so any
+# other name installs as another extension. The release's title carries the
+# version.
+#
+# Uploading to the opencart.com marketplace is done by hand.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PHP_VERSION: '8.4'
+    steps:
+      - uses: actions/checkout@v4
+      - name: The tag is the version
+        run: |
+          version=$(cat VERSION)
+          test "$GITHUB_REF_NAME" = "v$version" || { echo "tag $GITHUB_REF_NAME is not v$version (VERSION)" >&2; exit 1; }
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: Start OpenCart
+        run: scripts/test up
+      - name: Build the zip, install it through the Extension Installer, test
+        run: scripts/test all
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<EOF
+          Monokulo payment extension for OpenCart 4.1.0.4 (PHP 8.1 or newer).
+
+          Install: in the OpenCart admin, Extensions > Installer, upload \`monokulo.ocmod.zip\` and install it, then turn on Monokulo under Extensions > Extensions > Payments. See the README for connecting a store.
+
+          SHA-256: \`$(cut -d' ' -f1 dist/monokulo.ocmod.zip.sha256)\`
+          EOF
+          gh release create "$GITHUB_REF_NAME" dist/monokulo.ocmod.zip dist/monokulo.ocmod.zip.sha256 \
+            --title "Monokulo for OpenCart $VERSION" --notes-file notes.md

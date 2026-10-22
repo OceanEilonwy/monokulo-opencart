@@ -1,0 +1,121 @@
+# Tests on every pull request and push to main. Each job runs the shop in
+# Docker on the runner's own network (docker/compose.yaml), so it is Linux
+# only.
+#
+# - test: OpenCart 4.1.0.4 on PHP 8.1 and 8.4 (required) and 8.5 (allowed to
+#   fail until OpenCart supports it officially): the zip through the
+#   Extension Installer, then the unit, catalog, admin and http suites.
+#   Webhooks are tested against Monokulo's published vectors
+#   (tests/vectors, pinned in tests/vectors/PIN). 8.4 also reports coverage.
+# - vectors: the vendored vectors are still the ones at the pinned commit.
+# - smoke: against a real Monokulo built from the pinned commit (or a given
+#   image): on main, nightly and by hand, not on pull requests (building
+#   Monokulo takes a while).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+    inputs:
+      monokulo_image:
+        description: Monokulo image for the smoke test (empty builds the commit in tests/vectors/PIN)
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: PHP ${{ matrix.php }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - php: '8.1'
+            experimental: false
+          - php: '8.4'
+            experimental: false
+            coverage: true
+          - php: '8.5'
+            experimental: true
+    env:
+      PHP_VERSION: ${{ matrix.php }}
+      COVERAGE: ${{ matrix.coverage && '1' || '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start OpenCart
+        run: scripts/test up
+      - name: Run the tests
+        run: scripts/test all
+      - name: Coverage summary
+        if: matrix.coverage
+        run: |
+          {
+            echo '### Coverage (unit, catalog, admin)'
+            echo '```'
+            sed -n '1,8p' coverage/summary.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: matrix.coverage
+        with:
+          name: coverage
+          path: coverage/html
+      - uses: actions/upload-artifact@v4
+        if: matrix.php == '8.4'
+        with:
+          name: monokulo.ocmod.zip
+          path: |
+            dist/monokulo.ocmod.zip
+            dist/monokulo.ocmod.zip.sha256
+      - name: OpenCart's and the extension's logs
+        if: failure()
+        run: |
+          docker compose -f docker/compose.yaml exec -T opencart sh -c 'tail -n 100 /var/www/html/system/storage/logs/*.log; tail -n 100 /var/log/apache2/error.log' || true
+
+  vectors:
+    name: Webhook vectors match the pinned Monokulo
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare with the pinned commit
+        env:
+          MONOKULO_READ_TOKEN: ${{ secrets.MONOKULO_READ_TOKEN }}
+        run: scripts/vectors check
+
+  smoke:
+    name: Smoke test against Monokulo
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Monokulo at the pinned commit
+        if: inputs.monokulo_image == ''
+        env:
+          MONOKULO_READ_TOKEN: ${{ secrets.MONOKULO_READ_TOKEN }}
+        run: |
+          . tests/vectors/PIN
+          auth=${MONOKULO_READ_TOKEN:+x-access-token:$MONOKULO_READ_TOKEN@}
+          docker build -t monokulo:smoke "https://${auth}${repository#https://}.git#${commit}"
+      - name: Start OpenCart and install the extension
+        run: |
+          scripts/test up
+          scripts/test install
+      - name: Smoke test
+        env:
+          MONOKULO_IMAGE: ${{ inputs.monokulo_image || 'monokulo:smoke' }}
+        run: scripts/smoke
