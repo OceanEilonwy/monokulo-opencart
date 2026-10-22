@@ -32,5 +32,9 @@ RUN sed -i "s/^Listen 80$/Listen ${OC_PORT}/" /etc/apache2/ports.conf \
  && sed -i "s/<VirtualHost \*:80>/<VirtualHost *:${OC_PORT}>/" /etc/apache2/sites-available/000-default.conf \
  && printf 'display_errors = Off\nlog_errors = On\nerror_reporting = E_ALL\nmemory_limit = 512M\npcov.directory = /repo/src\n' > /usr/local/etc/php/conf.d/opencart.ini
 
+# Files Apache makes (template cache, logs) stay writable by the tests,
+# which boot OpenCart in-process as another user.
+RUN echo 'umask 000' >> /etc/apache2/envvars
+
 COPY docker/oc-setup /usr/local/bin/oc-setup
 RUN chmod +x /usr/local/bin/oc-setup
