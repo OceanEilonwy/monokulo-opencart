@@ -48,4 +48,7 @@ mariadb -h"$DB_HOST" -P"$DB_PORT" -u"$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" \
 	-e "UPDATE oc_setting SET value = '' WHERE store_id = 0 AND \`key\` = 'config_mail_engine'"
 
 chown -R www-data:www-data /var/www/html
+# The tests boot OpenCart in-process as your own user: let them write its
+# cache, logs and sessions too.
+chmod -R a+rwX system/storage
 echo "OpenCart installed at $OC_URL"

@@ -40,7 +40,13 @@ up)
 	;;
 install)
 	run php scripts/build-zip
+	# Uninstalling deletes the extension's files: never let it follow the
+	# development link into src/.
+	compose exec -T opencart sh -c 'if [ -L /var/www/html/extension/monokulo ]; then rm /var/www/html/extension/monokulo && cp -a /repo/src /var/www/html/extension/monokulo && chown -R www-data:www-data /var/www/html/extension/monokulo; fi'
 	suite http --group installer
+	# From here on the shop runs src/ itself, so a change is live at once and
+	# coverage names src/ files.
+	compose exec -T opencart sh -c 'rm -rf /var/www/html/extension/monokulo && ln -s /repo/src /var/www/html/extension/monokulo'
 	;;
 down)
 	compose down -v
