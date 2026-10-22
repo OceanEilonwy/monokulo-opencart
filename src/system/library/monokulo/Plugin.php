@@ -8,7 +8,7 @@ final class Plugin {
 	/** Kept equal to VERSION and install.json by a test. */
 	public const VERSION = '0.1.0';
 
-	/** The connect path's platform slug: `/connect/opencart`. */
+	/** The connect path's platform slug: `/plugins/connect/opencart`. */
 	public const SLUG = 'opencart';
 
 	/** What monokulo shows the merchant ("Connect your OpenCart shop"). */

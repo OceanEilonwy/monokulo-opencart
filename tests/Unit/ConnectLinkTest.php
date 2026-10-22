@@ -9,7 +9,7 @@ final class ConnectLinkTest extends TestCase {
 	public function test_the_link_names_the_plugin_and_carries_the_request(): void {
 		$link = ConnectLink::start('https://pay.example.com/', 'https://shop.example/', 'https://shop.example/index.php?route=extension/monokulo/payment/monokulo.connect', 'n1');
 
-		$this->assertStringStartsWith('https://pay.example.com/connect/opencart?', $link);
+		$this->assertStringStartsWith('https://pay.example.com/plugins/connect/opencart?', $link);
 		parse_str((string)parse_url($link, PHP_URL_QUERY), $query);
 		$this->assertSame([
 			'site_url'   => 'https://shop.example/',

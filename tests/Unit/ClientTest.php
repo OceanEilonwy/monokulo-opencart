@@ -32,7 +32,7 @@ final class ClientTest extends TestCase {
 	}
 
 	public function test_finishing_connect_sends_the_token_webhook_and_name(): void {
-		self::$monokulo->respond('POST', '/connect/opencart/finish', 200, ['public_key' => 'pk_1', 'secret_token' => 'sk_1', 'endpoint' => 'https://pay.example.com', 'webhook_signing_secret' => 'whsec_1']);
+		self::$monokulo->respond('POST', '/plugins/connect/opencart/finish', 200, ['public_key' => 'pk_1', 'secret_token' => 'sk_1', 'endpoint' => 'https://pay.example.com', 'webhook_signing_secret' => 'whsec_1']);
 		$trace = new Trace();
 
 		$credentials = (new Client($trace))->finishConnect(self::$monokulo->url . '/', 'tok', 'https://shop.example/index.php?route=x');
@@ -48,7 +48,7 @@ final class ClientTest extends TestCase {
 
 	/** Without a webhook secret the shop could never trust a webhook: that's no connection. */
 	public function test_finishing_without_every_credential_fails(): void {
-		self::$monokulo->respond('POST', '/connect/opencart/finish', 200, ['public_key' => 'pk_1', 'secret_token' => 'sk_1', 'endpoint' => 'https://pay.example.com']);
+		self::$monokulo->respond('POST', '/plugins/connect/opencart/finish', 200, ['public_key' => 'pk_1', 'secret_token' => 'sk_1', 'endpoint' => 'https://pay.example.com']);
 
 		$this->expectException(ApiError::class);
 		$this->expectExceptionMessage('missing webhook_signing_secret');
@@ -57,7 +57,7 @@ final class ClientTest extends TestCase {
 	}
 
 	public function test_a_monokulo_without_a_public_address_says_why(): void {
-		self::$monokulo->respond('POST', '/connect/opencart/finish', 503, ['error' => 'no public address yet']);
+		self::$monokulo->respond('POST', '/plugins/connect/opencart/finish', 503, ['error' => 'no public address yet']);
 
 		try {
 			(new Client(new Trace()))->finishConnect(self::$monokulo->url, 'tok', 'https://shop.example/');
