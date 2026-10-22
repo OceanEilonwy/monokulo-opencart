@@ -88,7 +88,7 @@ final class MonokuloSmokeTest extends TestCase {
 		$settings = $this->browser->get(Shop::adminUrl('extension/monokulo/payment/monokulo', $token));
 		$connect = html_entity_decode($this->connectLink($settings));
 		$toMonokulo = $this->browser->get($connect);
-		$this->assertStringStartsWith($this->monokulo . '/connect/opencart?', (string)$toMonokulo->location(), $connect . ' answered ' . $toMonokulo->status . $toMonokulo->headers . substr($toMonokulo->body, 0, 2000));
+		$this->assertStringStartsWith($this->monokulo . '/plugins/connect/opencart?', (string)$toMonokulo->location(), $connect . ' answered ' . $toMonokulo->status . $toMonokulo->headers . substr($toMonokulo->body, 0, 2000));
 
 		$setup = $this->browser->follow($toMonokulo);
 		$this->assertStringContainsString('OpenCart', $setup->text(), 'Monokulo names the plugin');
@@ -99,7 +99,7 @@ final class MonokuloSmokeTest extends TestCase {
 
 		// Back to OpenCart: Monokulo returns to the shop with the token, the
 		// shop redeems it and sends the browser to its admin page.
-		$back = $this->browser->submit($done, '/connect/opencart');
+		$back = $this->browser->submit($done, '/plugins/connect/opencart');
 		$this->assertStringStartsWith(Shop::URL . 'index.php?route=extension/monokulo/payment/monokulo.connect', (string)$back->location());
 		$return = $this->browser->get((string)$back->location());
 		$this->assertStringContainsString('monokulo_connected=1', (string)$return->location(), $return->body);

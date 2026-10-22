@@ -7,12 +7,12 @@ namespace Monokulo\OpenCart;
  */
 final class ConnectLink {
 	/**
-	 * `{address}/connect/opencart?site_url=…&return_url=…&nonce=…&name=OpenCart`.
+	 * `{address}/plugins/connect/opencart?site_url=…&return_url=…&nonce=…&name=OpenCart`.
 	 * `returnUrl` must be on the same host as `siteUrl` and https (plain http
 	 * only for localhost or a .onion host): Monokulo refuses anything else.
 	 */
 	public static function start(string $address, string $siteUrl, string $returnUrl, string $nonce): string {
-		return rtrim($address, '/') . '/connect/' . Plugin::SLUG . '?' . http_build_query([
+		return rtrim($address, '/') . '/plugins/connect/' . Plugin::SLUG . '?' . http_build_query([
 			'site_url'   => $siteUrl,
 			'return_url' => $returnUrl,
 			'nonce'      => $nonce,

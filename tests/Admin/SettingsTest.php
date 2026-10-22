@@ -123,7 +123,7 @@ final class SettingsTest extends ShopTestCase {
 		$answer = $this->admin(self::PAGE . '.connect', ['store_id' => '0']);
 
 		$location = OpenCart::location($answer);
-		$this->assertStringStartsWith(self::$monokulo->url . '/connect/opencart?', $location);
+		$this->assertStringStartsWith(self::$monokulo->url . '/plugins/connect/opencart?', $location);
 		parse_str((string)parse_url($location, PHP_URL_QUERY), $query);
 		$nonce = $this->rows("SELECT * FROM `" . DB_PREFIX . "monokulo_connect_nonce`")[0];
 		$this->assertSame([

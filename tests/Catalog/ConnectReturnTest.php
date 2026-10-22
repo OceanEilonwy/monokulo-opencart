@@ -28,7 +28,7 @@ final class ConnectReturnTest extends ShopTestCase {
 	}
 
 	private function monokuloFinishes(int $status, mixed $body): void {
-		self::$monokulo->respond('POST', '/connect/opencart/finish', $status, $body);
+		self::$monokulo->respond('POST', '/plugins/connect/opencart/finish', $status, $body);
 	}
 
 	private const CREDENTIALS = ['public_key' => 'pk_new', 'secret_token' => 'sk_new', 'endpoint' => 'https://pay.example.com', 'webhook_signing_secret' => 'whsec_new'];

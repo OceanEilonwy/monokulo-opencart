@@ -13,7 +13,7 @@ final class Client {
 	}
 
 	/**
-	 * `POST {address}/connect/opencart/finish`: redeems the single-use token
+	 * `POST {address}/plugins/connect/opencart/finish`: redeems the single-use token
 	 * the connect flow handed back, registers `webhookUrl`, and returns the
 	 * store's credentials.
 	 *
@@ -22,7 +22,7 @@ final class Client {
 	 * @throws ApiError|TransportError
 	 */
 	public function finishConnect(string $address, string $token, string $webhookUrl): array {
-		$url = rtrim($address, '/') . '/connect/' . Plugin::SLUG . '/finish';
+		$url = rtrim($address, '/') . '/plugins/connect/' . Plugin::SLUG . '/finish';
 		$response = $this->post($url, $this->headers(), (string)json_encode([
 			'token'       => $token,
 			'webhook_url' => $webhookUrl,
