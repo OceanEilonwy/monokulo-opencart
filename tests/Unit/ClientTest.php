@@ -168,6 +168,23 @@ final class ClientTest extends TestCase {
 		$this->assertSame(['GET /api/v1', 'GET /api/v1'], $this->requested(), 'once per kept entry');
 	}
 
+	/** A kept entry without `mk:onion-api` is asked about again before the answer is no: a 304 keeps it, a new entry with one says yes. */
+	public function test_a_kept_entry_without_an_onion_address_is_revalidated_before_saying_no(): void {
+		$this->entries->kept['sk_test'] = new Entry(FakeMonokulo::entry(), FakeMonokulo::ENTRY_ETAG, $this->now + 3000);
+		self::$monokulo->serveEntry();
+
+		$this->assertFalse($this->client()->hasOnionAddress($this->connection()));
+		$this->assertSame(FakeMonokulo::ENTRY_ETAG, self::$monokulo->requests()[0]['headers']['if-none-match']);
+		$this->assertSame($this->now + 3600, $this->entries->kept['sk_test']->expiresAt, 'the 304 keeps it another hour');
+
+		self::$monokulo->reset();
+		self::$monokulo->respond('GET', '/api/v1', 200, FakeMonokulo::entry(onion: true), headers: ['Content-Type' => 'application/prs.hal-forms+json', 'Cache-Control' => 'private, max-age=3600', 'ETag' => '"with-onion"']);
+
+		$this->assertTrue($this->client()->hasOnionAddress($this->connection()));
+		$this->assertSame('"with-onion"', $this->entries->kept['sk_test']->etag);
+		$this->assertSame(['GET /api/v1'], $this->requested());
+	}
+
 	/** Under a path every link carries it: nothing is built from `/api/v1`. */
 	public function test_under_a_path_every_link_keeps_it(): void {
 		self::$monokulo->serveEntry('/monokulo');
