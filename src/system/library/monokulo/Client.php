@@ -101,6 +101,19 @@ final class Client {
 	}
 
 	/**
+	 * Whether Monokulo has an onion address: the entry (kept, as for
+	 * orders) links `mk:onion-api` only then.
+	 *
+	 * @throws ApiError|TransportError
+	 */
+	public function hasOnionAddress(Connection $connection): bool {
+		[$entry] = $this->entry($connection, false, 30);
+		$href = $entry->body['_links']['mk:onion-api']['href'] ?? null;
+
+		return is_string($href) && $href !== '';
+	}
+
+	/**
 	 * The entry's `send-logs` form: the shop's warnings and errors, for the
 	 * merchant to read in Monokulo. Best effort: a failure here (the
 	 * store's client logs are off, Monokulo is down) is ignored.
