@@ -12,7 +12,6 @@ $_['text_stores']               = 'Stores';
 $_['text_stores_help']          = 'Each store connects to a store in your Monokulo, found by the store\'s web address. Stores that share an address share one connection.';
 $_['text_connected_as']         = 'Connected as %s since %s';
 $_['text_not_connected']        = 'Not connected';
-$_['text_reconnect_needed']     = 'Connect again: this store was connected by an older version of this extension, and Monero is hidden at checkout until it is.';
 $_['text_address_first']        = 'Save your Monokulo address first.';
 $_['text_all_zones']            = 'All zones';
 $_['text_connected']            = 'Your store is connected. Monero is now offered at checkout.';

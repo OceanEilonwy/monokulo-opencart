@@ -52,13 +52,6 @@ final class CheckoutTest extends ShopTestCase {
 		$this->assertSame('monokulo.monokulo', $methods['option']['monokulo']['code']);
 	}
 
-	/** Connected by an older version of this extension: hidden until connected again. */
-	public function test_an_old_connection_hides_monero(): void {
-		$this->connect(self::HOST, '0');
-
-		$this->assertSame([], $this->methods());
-	}
-
 	public function test_outside_the_chosen_geo_zone_monero_is_hidden(): void {
 		$this->connect();
 		$this->setting('config_checkout_payment_address', '1', 'config');
@@ -165,7 +158,7 @@ final class CheckoutTest extends ShopTestCase {
 
 	public function test_an_unreachable_monokulo_says_so(): void {
 		$this->connect();
-		$this->repository()->saveConnection(new \Monokulo\OpenCart\Connection(self::HOST, 'http://127.0.0.1:' . \Monokulo\OpenCart\Tests\Support\FakeMonokulo::freePort(), 'pk_test', 'sk_test', 'wh', Plugin::CONNECTION_VERSION, 1));
+		$this->repository()->saveConnection(new \Monokulo\OpenCart\Connection(self::HOST, 'http://127.0.0.1:' . \Monokulo\OpenCart\Tests\Support\FakeMonokulo::freePort(), 'pk_test', 'sk_test', 'wh', 1));
 
 		['answer' => $answer] = $this->confirm($this->order());
 

@@ -76,7 +76,6 @@ class Monokulo extends \Opencart\System\Engine\Controller {
 				'url'       => $store['url'],
 				'host'      => $host,
 				'connected' => $connection ? sprintf($this->language->get('text_connected_as'), $connection->publicKey, date($this->language->get('datetime_format'), $connection->connectedAt)) : '',
-				'reconnect' => $connection && $connection->needsReconnect(),
 				'connect'   => $this->url->link('extension/monokulo/payment/monokulo.connect', $token . '&store_id=' . $store['store_id'])
 			];
 		}

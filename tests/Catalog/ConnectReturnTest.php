@@ -49,7 +49,7 @@ final class ConnectReturnTest extends ShopTestCase {
 		$this->assertSame('opencart/' . Plugin::VERSION, $request['headers']['monokulo-client']);
 
 		$connection = $this->repository()->connection(self::HOST);
-		$this->assertSame(['https://pay.example.com', 'pk_new', 'sk_new', 'whsec_new', Plugin::CONNECTION_VERSION], [$connection->endpoint, $connection->publicKey, $connection->secretToken, $connection->webhookSecret, $connection->version]);
+		$this->assertSame(['https://pay.example.com', 'pk_new', 'sk_new', 'whsec_new'], [$connection->endpoint, $connection->publicKey, $connection->secretToken, $connection->webhookSecret]);
 		$this->assertSame('1', $this->rows("SELECT `value` FROM `" . DB_PREFIX . "setting` WHERE `store_id` = 0 AND `key` = 'payment_monokulo_status'")[0]['value']);
 	}
 

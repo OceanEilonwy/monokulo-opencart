@@ -107,14 +107,13 @@
                   <td>
                     {% if store.connected %}
                       {{ store.connected }}
-                      {% if store.reconnect %}<div class="text-danger">{{ text_reconnect_needed }}</div>{% endif %}
                     {% else %}
                       {{ text_not_connected }}
                     {% endif %}
                   </td>
                   <td class="text-end">
                     {% if can_connect %}
-                      <a href="{{ store.connect }}" class="btn {% if store.connected and not store.reconnect %}btn-light{% else %}btn-primary{% endif %}">{% if store.connected %}{{ button_reconnect }}{% else %}{{ button_connect }}{% endif %}</a>
+                      <a href="{{ store.connect }}" class="btn {% if store.connected %}btn-light{% else %}btn-primary{% endif %}">{% if store.connected %}{{ button_reconnect }}{% else %}{{ button_connect }}{% endif %}</a>
                     {% endif %}
                   </td>
                 </tr>

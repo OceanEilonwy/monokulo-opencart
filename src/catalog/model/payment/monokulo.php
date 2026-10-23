@@ -19,7 +19,7 @@ use Monokulo\OpenCart\WebhookEvent;
 class Monokulo extends \Opencart\System\Engine\Model {
 	/**
 	 * Monero is offered when the extension is on, this store's host is
-	 * connected (by this plugin version's rules), the cart has no
+	 * connected, the cart has no
 	 * subscription (a Monero payment can't be taken again by itself), and the
 	 * payment address is in the chosen geo zone.
 	 *
@@ -32,7 +32,7 @@ class Monokulo extends \Opencart\System\Engine\Model {
 
 		$connection = $this->connection();
 
-		if (!$connection || $connection->needsReconnect()) {
+		if (!$connection) {
 			$status = false;
 		} elseif ($this->cart->hasSubscription()) {
 			$status = false;

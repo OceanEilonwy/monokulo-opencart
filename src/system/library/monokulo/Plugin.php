@@ -14,13 +14,6 @@ final class Plugin {
 	/** What monokulo shows the merchant ("Connect your OpenCart shop"). */
 	public const NAME = 'OpenCart';
 
-	/**
-	 * Bumped when a stored connection can no longer be used as is (its
-	 * credentials changed shape): the store must connect again, and Monero is
-	 * hidden at checkout until it does.
-	 */
-	public const CONNECTION_VERSION = '1';
-
 	/** The `Monokulo-Client` header value, `opencart/<version>`. */
 	public static function client(): string {
 		return self::SLUG . '/' . self::VERSION;
