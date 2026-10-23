@@ -231,6 +231,23 @@ final class CheckoutTest extends ShopTestCase {
 		$this->assertSame(['/api/v1'], array_column(self::$monokulo->requests(), 'path'), 'the entry only: no order request');
 	}
 
+	/** A Monokulo that gained an onion address since the shop kept its entry: the entry is asked about again, and the Tor customer pays there. */
+	public function test_a_monokulo_that_just_gained_an_onion_address_takes_tor_customers_at_once(): void {
+		$this->connect();
+		$this->monokuloAnswers(201, FakeMonokulo::order('ord_1'));
+		$this->confirm($this->order());
+		self::$monokulo->reset();
+		self::$monokulo->respond('GET', '/api/v1', 200, FakeMonokulo::entry(onion: true), headers: ['Content-Type' => 'application/prs.hal-forms+json', 'Cache-Control' => 'private, max-age=3600', 'ETag' => '"with-onion"']);
+		self::$monokulo->createsOrder('ord_2', onion: true);
+
+		$answer = $this->confirm($this->order(), host: self::ONION_HOST)['answer'];
+
+		$this->assertSame(['redirect' => FakeMonokulo::ONION . '/checkout/ord_2'], $answer);
+		$requests = self::$monokulo->requests();
+		$this->assertSame(['/api/v1', '/api/v1/orders'], array_column($requests, 'path'));
+		$this->assertSame(FakeMonokulo::ENTRY_ETAG, $requests[0]['headers']['if-none-match'], 'revalidated, not read afresh');
+	}
+
 	/** An entry with an onion address but an order without its onion checkout: still never the web. */
 	public function test_a_customer_on_tor_is_not_sent_to_the_web_when_the_order_has_no_onion_checkout(): void {
 		$this->connect();

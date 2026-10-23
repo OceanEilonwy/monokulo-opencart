@@ -18,6 +18,11 @@ namespace Monokulo\OpenCart;
 final class Client {
 	private const HAL = 'application/prs.hal-forms+json';
 
+	/** How to get the entry: the kept one while fresh, asked again with its ETag, or read afresh. */
+	private const KEPT = 0;
+	private const REVALIDATE = 1;
+	private const REREAD = 2;
+
 	/** Answers that mean a kept entry may be out of date: the key changed, or the API moved on. */
 	private const STALE = [401, 404, 405];
 
@@ -102,15 +107,25 @@ final class Client {
 
 	/**
 	 * Whether Monokulo has an onion address: the entry (kept, as for
-	 * orders) links `mk:onion-api` only then.
+	 * orders) links `mk:onion-api` only then. A kept entry without it is
+	 * asked about again (with its ETag: unchanged, a `304`) before the
+	 * answer is no, so a Monokulo that has just gained an onion address
+	 * is never taken for one without it.
 	 *
 	 * @throws ApiError|TransportError
 	 */
 	public function hasOnionAddress(Connection $connection): bool {
-		[$entry] = $this->entry($connection, false, 30);
-		$href = $entry->body['_links']['mk:onion-api']['href'] ?? null;
+		$onion = static function (Entry $entry): bool {
+			$href = $entry->body['_links']['mk:onion-api']['href'] ?? null;
 
-		return is_string($href) && $href !== '';
+			return is_string($href) && $href !== '';
+		};
+		[$entry, $fresh] = $this->entry($connection, self::KEPT, 30);
+		if (!$onion($entry) && !$fresh) {
+			[$entry] = $this->entry($connection, self::REVALIDATE, 30);
+		}
+
+		return $onion($entry);
 	}
 
 	/**
@@ -144,12 +159,12 @@ final class Client {
 	 * @throws ApiError|TransportError
 	 */
 	private function submit(Connection $connection, string $name, array $body, int $timeoutSeconds): array {
-		[$entry, $fresh] = $this->entry($connection, false, $timeoutSeconds);
+		[$entry, $fresh] = $this->entry($connection, self::KEPT, $timeoutSeconds);
 		while (true) {
 			$form = $entry->form($name);
 			if ($form === null) {
 				if (!$fresh) {
-					[$entry, $fresh] = $this->entry($connection, true, $timeoutSeconds);
+					[$entry, $fresh] = $this->entry($connection, self::REREAD, $timeoutSeconds);
 
 					continue;
 				}
@@ -159,7 +174,7 @@ final class Client {
 			$target = Url::resolve($connection->api, $form['target']);
 			$response = $this->request($form['method'], $target, $this->headers($connection), (string)json_encode($body), $timeoutSeconds);
 			if (!$fresh && in_array($response->status, self::STALE, true)) {
-				[$entry, $fresh] = $this->entry($connection, true, $timeoutSeconds);
+				[$entry, $fresh] = $this->entry($connection, self::REREAD, $timeoutSeconds);
 
 				continue;
 			}
@@ -170,26 +185,27 @@ final class Client {
 
 	/**
 	 * The API's entry for `connection`'s key, and whether it was read just
-	 * now: the kept one while it's fresh (unless `reread`), else read again,
-	 * with the kept one's ETag so an unchanged entry is a `304`.
+	 * now: the kept one while it's fresh (KEPT), else asked for again with
+	 * the kept one's ETag so an unchanged entry is a `304` (KEPT once
+	 * expired, or REVALIDATE), or read afresh (REREAD).
 	 *
 	 * @return array{0: Entry, 1: bool}
 	 *
 	 * @throws ApiError|TransportError
 	 */
-	private function entry(Connection $connection, bool $reread, int $timeoutSeconds): array {
+	private function entry(Connection $connection, int $how, int $timeoutSeconds): array {
 		$now = $this->clock ? ($this->clock)() : time();
 		$kept = $this->entries->entry($connection);
-		if ($kept && !$reread && $kept->expiresAt > $now) {
+		if ($kept && $how === self::KEPT && $kept->expiresAt > $now) {
 			return [$kept, false];
 		}
 		$headers = $this->headers($connection);
-		if ($kept && !$reread && $kept->etag !== '') {
+		if ($kept && $how !== self::REREAD && $kept->etag !== '') {
 			$headers['If-None-Match'] = $kept->etag;
 		}
 		$response = $this->request('GET', $connection->api, $headers, null, $timeoutSeconds);
 		$expires = $now + self::maxAge($response);
-		if ($kept && !$reread && $response->status === 304) {
+		if ($kept && $how !== self::REREAD && $response->status === 304) {
 			$entry = new Entry($kept->body, $response->header('etag') ?? $kept->etag, $expires);
 		} else {
 			$entry = new Entry($this->decode($response, 200), $response->header('etag') ?? '', $expires);

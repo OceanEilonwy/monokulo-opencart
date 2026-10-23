@@ -71,8 +71,9 @@ come back to it.
 A customer browsing the shop on its own `.onion` address stays on Tor: they
 are sent to the order's checkout on Monokulo's onion address (the order's
 `mk:onion-checkout` link), never to its web address, and that is the link
-in their confirmation. When your Monokulo has no onion address (its API entry
-has no `mk:onion-api`) there is nowhere on Tor to send them: before any
+in their confirmation. When your Monokulo has no onion address (its API entry,
+asked for again first if the kept one lacks it, has no `mk:onion-api`)
+there is nowhere on Tor to send them: before any
 Monokulo order is made, they are told Monero can't be paid over Tor right
 now, the order is left as it was, and the shop's log says why. Give
 your Monokulo an onion address (Tor inside it, or your own tor) and orders
