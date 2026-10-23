@@ -3,5 +3,5 @@
   "description": "Accept Monero at checkout through your own Monokulo: a self-hosted, non-custodial payment processor that only ever holds a view key.",
   "version": "0.1.0",
   "author": "Monokulo",
-  "link": "https://monokulo.com/docs/plugins/"
+  "link": "https://docs.monokulo.com/plugins/"
 }
