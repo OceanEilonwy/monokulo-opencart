@@ -20,9 +20,15 @@ use PHPUnit\Framework\TestCase;
  * 4. a guest buys something with Monero: the shop creates the Monokulo
  *    order through the API and sends them to its checkout page, which
  *    loads; the order, read back through the API with the store's key, is
- *    pending.
+ *    pending, and the shop kept its dashboard page;
+ * 5. a guest on the shop's onion address buys too, and is sent to the
+ *    order's checkout on Monokulo's onion address (the smoke Monokulo has
+ *    one, docker/monokulo-smoke.toml), with the entry kept from the first
+ *    order.
  *
  * Nothing is paid. Monokulo's pages are filled in by their fields' names.
+ * Along the way, what the real Monokulo answers is compared with what the
+ * stand-in the other suites use answers.
  */
 final class MonokuloSmokeTest extends TestCase {
 	/** A mainnet watch-only wallet: a fixed view key and its public spend key, for tests only. */
@@ -44,9 +50,14 @@ final class MonokuloSmokeTest extends TestCase {
 		Shop::exec("DELETE FROM oc_monokulo_connection");
 	}
 
-	public function test_connect_then_a_customer_is_sent_to_pay(): void {
+	/** A customer browsing the shop on its onion address (the shop answers any host as its default store). */
+	private const ONION_SHOP = 'shopxyzshopxyzshopxyzshopxyzshopxyzshopxyzshopxyzshopxyz.onion';
+
+	public function test_connect_then_customers_are_sent_to_pay(): void {
 		$this->signUpToMonokulo();
 		$this->connectTheShop();
+		$this->theEntryIsTheStandIns();
+
 		$checkout = $this->buyWithMonero();
 
 		// The Monokulo checkout loads, and the new order is waiting for payment.
@@ -56,12 +67,35 @@ final class MonokuloSmokeTest extends TestCase {
 		$this->assertSame('pending', $order['status']);
 		$this->assertSame(0, $order['confirmations']);
 		$this->assertSame('/checkout/' . $order['order_id'], $order['_links']['mk:checkout']['href']);
+		$this->theOrderIsTheStandIns($order);
+
+		// The shop kept the order's page on the merchant's dashboard, for its notes' "In Monokulo" link: the merchant, signed in, opens it.
+		$kept = Shop::rows("SELECT dashboard_url FROM oc_monokulo_order WHERE monokulo_order_id = " . Shop::quote($order['order_id']))[0]['dashboard_url'];
+		$this->assertSame($this->monokulo . $order['_links']['mk:dashboard-order']['href'], $kept);
+		$dashboard = $this->browser->get($kept);
+		$this->assertSame(200, $dashboard->status);
+		$this->assertStringContainsString($order['order_id'], $dashboard->body);
+
+		// The shop kept the entry it read, as its Cache-Control says, with the ETag Monokulo has for it.
+		$entry = $this->browser->get($this->connection()['api'], ['Authorization' => 'Bearer ' . $this->connection()['secret_token']]);
+		$this->assertSame('private, max-age=3600', $entry->header('cache-control'));
+		$this->assertSame($entry->header('etag'), $this->connection()['entry_etag']);
+		$this->assertGreaterThan(time() + 3500, (int)$this->connection()['entry_expires_at']);
+
+		// A customer on the shop's onion address is sent to the order's checkout on Monokulo's.
+		$onion = $this->buyWithMonero(self::ONION_SHOP);
+		$this->assertMatchesRegularExpression('#\A' . preg_quote(FakeMonokulo::ONION, '#') . '/checkout/order_[0-9a-f-]+\z#', $onion);
+		$order = $this->readOrder(substr($onion, strlen(FakeMonokulo::ONION . '/checkout/')));
+		$this->assertSame($onion, $order['_links']['mk:onion-checkout']['href']);
+		$history = Shop::rows("SELECT h.comment FROM oc_monokulo_order m JOIN oc_order_history h ON h.order_id = m.order_id WHERE m.monokulo_order_id = " . Shop::quote($order['order_id']));
+		$this->assertSame('Pay for this order with Monero here: ' . $onion, $history[0]['comment'], 'their link in the confirmation is the onion one');
 	}
 
 	/**
 	 * The stand-in Monokulo the other suites use answers as this one does:
 	 * checked against the OpenAPI document the entry links to
-	 * (`service-desc`), so a change in Monokulo's API shows here.
+	 * (`service-desc`), so a change in Monokulo's API shows here. (The
+	 * test connects below compare the stand-in with real answers too.)
 	 */
 	public function test_the_stand_in_matches_monokulos_openapi(): void {
 		$entry = $this->browser->get($this->monokulo . '/api/v1')->json();
@@ -70,6 +104,18 @@ final class MonokuloSmokeTest extends TestCase {
 		$schema = static function (array $ref) use ($schemas): array {
 			return $schemas[substr($ref['$ref'], strlen('#/components/schemas/'))];
 		};
+		$keys = static fn(array $a): array => array_keys($a);
+		$missing = static fn(array $wanted, array $have): array => array_values(array_diff($wanted, $have));
+
+		// The handshake: its answer has every field the stand-in's has, and the plugin tells apart the problems it names.
+		$finish = $openapi['paths']['/plugins/connect/{slug}/finish']['post'];
+		$connection = $schema($finish['responses']['200']['content']['application/json']['schema']);
+		$this->assertSame([], $missing($keys(FakeMonokulo::connected(onion: true)), $keys($connection['properties'])), 'the stand-in\'s handshake has no field Monokulo lacks');
+		$this->assertSame([], $missing($connection['required'], $keys(FakeMonokulo::connected())), 'and every required one');
+		$problems = implode(' ', array_column($finish['responses'], 'description'));
+		foreach (['invalid-connect-code', 'no-public-address', 'rate-limited', 'challenge-required', 'internal'] as $problem) {
+			$this->assertStringContainsString('problems/' . $problem . ')', $problems);
+		}
 
 		// The order form takes every field the shop sends.
 		$create = $openapi['paths']['/api/v1/orders']['post'];
@@ -77,21 +123,62 @@ final class MonokuloSmokeTest extends TestCase {
 		$this->assertContains('sk', $create['x-monokulo-keys']);
 		$input = $schema($create['requestBody']['content']['application/json']['schema']);
 		$sent = OrderRequest::body(0, 1, 12.5, 'EUR', 2, ['Mug'], 'Order #1', ' + %d more');
-		$this->assertSame([], array_values(array_diff(array_keys($sent), array_keys($input['properties']))));
+		$this->assertSame([], $missing($keys($sent), $keys($input['properties'])));
 
-		// The answer is an order with every field the stand-in's has, and its links.
+		// The answer is an order with every field the stand-in's has, and its links: the checkout on both addresses and the dashboard page.
 		$order = $schema($create['responses']['201']['content']['application/prs.hal-forms+json']['schema']);
-		$fixture = FakeMonokulo::order('order_1');
-		$this->assertSame([], array_values(array_diff($order['required'], array_keys($fixture))), 'the stand-in has every required field');
-		$this->assertSame([], array_values(array_diff(array_keys($fixture), array_keys($order['properties']))), 'and no field Monokulo lacks');
-		$this->assertSame([], array_values(array_diff(array_keys($fixture['_links']), array_keys($order['properties']['_links']['properties']))));
+		$fixture = FakeMonokulo::order('order_1', onion: true);
+		$this->assertSame([], $missing($order['required'], $keys($fixture)), 'the stand-in has every required field');
+		$this->assertSame([], $missing($keys($fixture), $keys($order['properties'])), 'and no field Monokulo lacks');
+		$this->assertSame([], $missing($keys($fixture['_links']), $keys($order['properties']['_links']['properties'])));
+		foreach (['/checkout/{order_id}', '/stores/{id}/orders/{order_id}'] as $page) {
+			$this->assertArrayHasKey('text/html', $openapi['paths'][$page]['get']['responses']['200']['content'], $page . ' is a page');
+		}
 
-		// The entry's links and form are Monokulo's.
-		$root = $schema($openapi['paths']['/api/v1']['get']['responses']['200']['content']['application/prs.hal-forms+json']['schema']);
-		$this->assertSame([], array_values(array_diff(array_keys(FakeMonokulo::entry()['_links']), array_keys($root['properties']['_links']['properties']))));
+		// The entry's links and forms are Monokulo's, and it can be kept and revalidated.
+		$get = $openapi['paths']['/api/v1']['get'];
+		$root = $schema($get['responses']['200']['content']['application/prs.hal-forms+json']['schema']);
+		$this->assertSame([], $missing($keys(FakeMonokulo::entry(onion: true)['_links']), $keys($root['properties']['_links']['properties'])));
+		$this->assertArrayHasKey('304', $get['responses']);
+		$this->assertContains('If-None-Match', array_column($get['parameters'], 'name'));
 		$form = $root['properties']['_templates']['additionalProperties'];
-		$this->assertSame([], array_values(array_diff($form['required'], array_keys(FakeMonokulo::entry()['_templates']['create-order']))), 'the stand-in\'s form has every required field');
-		$this->assertArrayHasKey('/api/v1/logs', $openapi['paths'], 'where the shop forwards its errors');
+		foreach (FakeMonokulo::entry()['_templates'] as $name => $template) {
+			$this->assertSame([], $missing($form['required'], $keys($template)), 'the stand-in\'s ' . $name . ' form has every required field');
+		}
+		$logs = $openapi['paths']['/api/v1/logs']['post'];
+		$this->assertSame(['send-logs', ['sk']], [$logs['x-hal-forms-template'], $logs['x-monokulo-keys']], 'where the shop forwards its errors, with its key');
+	}
+
+	/**
+	 * The entry the shop's key gets is the stand-in's, link for link and
+	 * form for form (the smoke Monokulo has the stand-in's onion address).
+	 */
+	private function theEntryIsTheStandIns(): void {
+		$entry = $this->apiGet($this->connection()['api']);
+		$standIn = FakeMonokulo::entry(onion: true);
+		$this->assertEqualsCanonicalizing(array_keys($standIn['_links']), array_keys($entry['_links']));
+		foreach ($standIn['_links'] as $rel => $link) {
+			$this->assertEquals($rel === 'curies' ? $link : $link['href'], $rel === 'curies' ? $entry['_links'][$rel] : $entry['_links'][$rel]['href'], $rel);
+		}
+		$this->assertSame(array_keys($standIn['_templates']), array_keys($entry['_templates']));
+		foreach ($standIn['_templates'] as $name => $form) {
+			$this->assertSame([$form['method'], $form['target']], [$entry['_templates'][$name]['method'], $entry['_templates'][$name]['target']], $name);
+		}
+	}
+
+	/** A real order as the shop's key reads it has the stand-in's fields and links, at the same places. */
+	private function theOrderIsTheStandIns(array $order): void {
+		$standIn = FakeMonokulo::order($order['order_id'], onion: true);
+		$this->assertEqualsCanonicalizing(array_keys($standIn), array_keys($order));
+		$this->assertEqualsCanonicalizing(array_keys($standIn['_links']), array_keys($order['_links']));
+		$storeId = explode('/', $order['_links']['mk:dashboard-order']['href'])[2];
+		foreach ($standIn['_links'] as $rel => $link) {
+			if ($rel === 'curies') {
+				$this->assertEquals($link, $order['_links'][$rel]);
+			} else {
+				$this->assertSame(str_replace(FakeMonokulo::STORE_ID, $storeId, $link['href']), $order['_links'][$rel]['href'], $rel);
+			}
+		}
 	}
 
 	/**
@@ -176,14 +263,19 @@ final class MonokuloSmokeTest extends TestCase {
 
 		$admin = $this->browser->get((string)$return->location());
 		$this->assertStringContainsString('Your store is connected', $admin->text());
-		$connection = Shop::rows("SELECT * FROM oc_monokulo_connection WHERE host = 'localhost:8090'")[0];
+		$connection = $this->connection();
 		$this->assertSame($this->monokulo . '/api/v1', $connection['api']);
+		$this->assertSame(FakeMonokulo::ONION . '/api/v1', $connection['onion_api'], 'the onion entry, from the handshake');
 		$this->assertStringStartsWith('pk_', $connection['public_key']);
 		$this->assertNotSame('', $connection['webhook_secret']);
 	}
 
-	/** A guest checkout with Monero; returns the Monokulo checkout it was sent to. */
-	private function buyWithMonero(): string {
+	/**
+	 * A guest checkout with Monero, the last step (pay) on `host`, with the
+	 * same session (curl matches cookies to a Host header, so it goes by
+	 * hand); returns the Monokulo checkout it was sent to.
+	 */
+	private function buyWithMonero(string $host = ''): string {
 		$shop = Shop::URL . 'index.php?route=';
 		$this->ok($this->browser->post($shop . 'checkout/cart.add&language=en-gb', ['product_id' => self::PRODUCT, 'quantity' => '1']));
 
@@ -206,9 +298,11 @@ final class MonokuloSmokeTest extends TestCase {
 		$confirmStep = $this->browser->get($shop . 'checkout/confirm.confirm&language=en-gb');
 		$this->assertStringContainsString('Pay with Monero', $confirmStep->body);
 
-		$answer = $this->browser->get($shop . 'extension/monokulo/payment/monokulo.confirm&language=en-gb')->json();
+		$answer = $this->browser->get($shop . 'extension/monokulo/payment/monokulo.confirm&language=en-gb', $host !== '' ? ['Host' => $host, 'Cookie' => 'OCSESSID=' . $this->browser->cookie('OCSESSID')] : [])->json();
 		$this->assertArrayHasKey('redirect', $answer, json_encode($answer));
-		$this->assertMatchesRegularExpression('#\A' . preg_quote($this->monokulo, '#') . '/checkout/order_[0-9a-f-]+\z#', $answer['redirect']);
+		if ($host === '') {
+			$this->assertMatchesRegularExpression('#\A' . preg_quote($this->monokulo, '#') . '/checkout/order_[0-9a-f-]+\z#', $answer['redirect']);
+		}
 
 		$order = Shop::rows("SELECT o.order_id, o.order_status_id FROM oc_monokulo_order m JOIN oc_order o ON o.order_id = m.order_id ORDER BY m.seq DESC LIMIT 1")[0];
 		$this->assertSame('1', $order['order_status_id'], 'placed as Pending');

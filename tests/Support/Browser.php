@@ -31,6 +31,18 @@ final class Browser {
 		return $this->request('POST', $url, [$field => new \CURLFile($path, 'application/zip', $filename)], []);
 	}
 
+	/** The value of the cookie `name` the browser holds for any host, or null. */
+	public function cookie(string $name): ?string {
+		foreach (file($this->jar, FILE_IGNORE_NEW_LINES) ?: [] as $line) {
+			$fields = explode("\t", $line);
+			if (count($fields) === 7 && $fields[5] === $name) {
+				return $fields[6];
+			}
+		}
+
+		return null;
+	}
+
 	/** Follows redirects from `page` (at most ten), as a browser would. */
 	public function follow(Page $page): Page {
 		for ($i = 0; $i < 10 && $page->location() !== null; $i++) {

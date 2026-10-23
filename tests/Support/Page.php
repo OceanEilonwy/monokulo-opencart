@@ -20,6 +20,11 @@ final class Page {
 		return self::absolute(trim($m[1]), $this->url);
 	}
 
+	/** The header `name`'s value (the last, when there are several), or null. */
+	public function header(string $name): ?string {
+		return preg_match_all('/^' . preg_quote($name, '/') . ':\s*(.*?)\r?$/mi', $this->headers, $m) ? end($m[1]) : null;
+	}
+
 	/** @return array<string, mixed> */
 	public function json(): array {
 		$data = json_decode($this->body, true);
