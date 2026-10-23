@@ -1,4 +1,6 @@
 <?php
+declare(strict_types=1);
+
 /**
  * Loads the extension's own classes (namespace Monokulo\OpenCart, one class
  * per file named after it). They know nothing about OpenCart, so the unit
