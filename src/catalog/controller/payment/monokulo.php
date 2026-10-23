@@ -42,8 +42,9 @@ class Monokulo extends \Opencart\System\Engine\Controller {
 	 *
 	 * A customer on the shop's onion address stays on Tor: they are sent to
 	 * the order's checkout on Monokulo's onion address, never its web one.
-	 * When Monokulo has no onion address they are told Monero can't be paid
-	 * over Tor here, and the order is left as it was.
+	 * When Monokulo has no onion address (its entry has no `mk:onion-api`)
+	 * they are told Monero can't be paid over Tor here before any Monokulo
+	 * order is made, and the order is left as it was.
 	 */
 	public function confirm(): void {
 		$this->load->language('extension/monokulo/payment/monokulo');
@@ -81,8 +82,17 @@ class Monokulo extends \Opencart\System\Engine\Controller {
 			$total = (float)$this->currency->format((float)$order_info['total'], $currency, (float)$order_info['currency_value'], false);
 			$body = OrderRequest::body((int)$order_info['store_id'], $order_id, $total, $currency, $this->currency->getDecimalPlace($currency), $names, sprintf($this->language->get('text_order_description'), $order_id), $this->language->get('text_more'));
 
+			$on_tor = Url::isOnion((string)($this->request->server['HTTP_HOST'] ?? ''));
+
 			try {
-				$monokulo_order = $this->client()->createOrder($connection, $body);
+				// The entry says up front whether Monokulo has an onion address: without one,
+				// a Tor customer has nowhere to pay, so no order is made for them.
+				if ($on_tor && !$this->client()->hasOnionAddress($connection)) {
+					$this->log()->error(sprintf('Order %d: the customer is on the shop\'s onion address, but your Monokulo has no onion address (its API entry has no mk:onion-api), so no Monokulo order was made and they were not sent to pay on the web.', $order_id));
+					$json['error'] = $this->language->get('error_no_onion');
+				} else {
+					$monokulo_order = $this->client()->createOrder($connection, $body);
+				}
 			} catch (ApiError $e) {
 				$this->log()->error(sprintf('Creating the Monokulo order for order %d failed: HTTP %d: %s%s', $order_id, $e->status, $e->detail, $e->merchantHint()));
 				$json['error'] = $this->language->get($e->customerMessageKey());
@@ -93,10 +103,10 @@ class Monokulo extends \Opencart\System\Engine\Controller {
 		}
 
 		if (!$json) {
-			$checkout = Url::isOnion((string)($this->request->server['HTTP_HOST'] ?? '')) ? $monokulo_order['onion_checkout_url'] : $monokulo_order['checkout_url'];
+			$checkout = $on_tor ? $monokulo_order['onion_checkout_url'] : $monokulo_order['checkout_url'];
 
 			if ($checkout === '') {
-				$this->log()->error(sprintf('Order %d: the customer is on the shop\'s onion address, but Monokulo order %s has no onion checkout (mk:onion-checkout): your Monokulo has no onion address, so they were not sent to pay on the web.', $order_id, $monokulo_order['order_id']));
+				$this->log()->error(sprintf('Order %d: the customer is on the shop\'s onion address, but Monokulo order %s has no onion checkout (mk:onion-checkout), so they were not sent to pay on the web.', $order_id, $monokulo_order['order_id']));
 				$json['error'] = $this->language->get('error_no_onion');
 			}
 		}

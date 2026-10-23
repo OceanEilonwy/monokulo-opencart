@@ -155,6 +155,19 @@ final class ClientTest extends TestCase {
 		$this->assertSame(self::$monokulo->url . '/checkout/order_1', $order['checkout_url']);
 	}
 
+	/** Whether Monokulo has an onion address is its entry's `mk:onion-api`, read from the kept entry. */
+	public function test_the_entry_says_whether_monokulo_has_an_onion_address(): void {
+		self::$monokulo->serveEntry();
+		$this->assertFalse($this->client()->hasOnionAddress($this->connection()));
+
+		self::$monokulo->serveEntry(onion: true);
+		$this->entries->kept = [];
+		$this->assertTrue($this->client()->hasOnionAddress($this->connection()));
+		$this->assertTrue($this->client()->hasOnionAddress($this->connection()));
+
+		$this->assertSame(['GET /api/v1', 'GET /api/v1'], $this->requested(), 'once per kept entry');
+	}
+
 	/** Under a path every link carries it: nothing is built from `/api/v1`. */
 	public function test_under_a_path_every_link_keeps_it(): void {
 		self::$monokulo->serveEntry('/monokulo');

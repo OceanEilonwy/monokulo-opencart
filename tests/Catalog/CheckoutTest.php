@@ -207,7 +207,12 @@ final class CheckoutTest extends ShopTestCase {
 		$this->assertSame(['redirect' => self::$monokulo->url . '/checkout/ord_1'], $this->confirm($this->order())['answer']);
 	}
 
-	/** Without an onion address at Monokulo a Tor customer is never sent to the web: they're told, the merchant's log says why, the order is untouched. */
+	/**
+	 * Without an onion address at Monokulo (no `mk:onion-api` on its entry) a
+	 * Tor customer is never sent to the web, and no Monokulo order is made
+	 * for them: they're told, the merchant's log says why, the order is
+	 * untouched.
+	 */
 	public function test_a_customer_on_tor_is_not_sent_to_the_web_when_monokulo_has_no_onion_address(): void {
 		$this->connect();
 		$this->monokuloAnswers(201, FakeMonokulo::order('ord_1'));
@@ -222,7 +227,37 @@ final class CheckoutTest extends ShopTestCase {
 		$this->assertSame([], $this->history($orderId));
 		$this->assertSame([], $this->rows("SELECT * FROM `" . DB_PREFIX . "monokulo_order`"));
 		$this->assertSame($orderId, $result['registry']->get('session')->data['order_id'], 'the cart is kept');
-		$this->assertStringContainsString('has no onion checkout (mk:onion-checkout)', $logged);
+		$this->assertStringContainsString('your Monokulo has no onion address (its API entry has no mk:onion-api), so no Monokulo order was made', $logged);
+		$this->assertSame(['/api/v1'], array_column(self::$monokulo->requests(), 'path'), 'the entry only: no order request');
+	}
+
+	/** An entry with an onion address but an order without its onion checkout: still never the web. */
+	public function test_a_customer_on_tor_is_not_sent_to_the_web_when_the_order_has_no_onion_checkout(): void {
+		$this->connect();
+		self::$monokulo->serveEntry(onion: true);
+		self::$monokulo->createsOrder('ord_1');
+		$orderId = $this->order();
+
+		$logged = $this->logged(function () use ($orderId, &$result): void {
+			$result = $this->confirm($orderId, host: self::ONION_HOST);
+		});
+
+		$this->assertSame(['error' => 'Monero can\'t be paid over Tor at this shop right now. Please contact the store owner.'], $result['answer']);
+		$this->assertSame([], $this->rows("SELECT * FROM `" . DB_PREFIX . "monokulo_order`"));
+		$this->assertStringContainsString('Monokulo order ord_1 has no onion checkout (mk:onion-checkout)', $logged);
+	}
+
+	/** With the entry kept, a Tor customer's order is still one request: the onion check reads the kept entry. */
+	public function test_a_customer_on_tor_with_the_entry_kept_is_one_request(): void {
+		$this->connect();
+		self::$monokulo->serveEntry(onion: true);
+		self::$monokulo->createsOrder('ord_1', onion: true);
+		$this->confirm($this->order());
+		self::$monokulo->reset();
+		self::$monokulo->createsOrder('ord_2', onion: true);
+
+		$this->assertSame(['redirect' => FakeMonokulo::ONION . '/checkout/ord_2'], $this->confirm($this->order(), host: self::ONION_HOST)['answer']);
+		$this->assertSame(['/api/v1/orders'], array_column(self::$monokulo->requests(), 'path'));
 	}
 
 	/**
