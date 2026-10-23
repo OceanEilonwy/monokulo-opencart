@@ -4,7 +4,8 @@
  * (`php -S 127.0.0.1:<port> fake-monokulo.php`). FAKE_MONOKULO_DIR holds
  * its state: `responses.json` says what to answer ("POST /path" →
  * {status, body}), and every request it gets is appended to
- * `requests.jsonl` for the test to read back.
+ * `requests.jsonl` for the test to read back. An answer's `headers` replace
+ * the default `Content-Type: application/json`.
  */
 $dir = getenv('FAKE_MONOKULO_DIR');
 $path = (string)parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
@@ -36,5 +37,7 @@ if (!empty($response['delay'])) {
 }
 
 http_response_code((int)$response['status']);
-header('Content-Type: application/json');
+foreach ($response['headers'] ?? ['Content-Type' => 'application/json'] as $name => $value) {
+	header($name . ': ' . $value);
+}
 echo is_string($response['body']) ? $response['body'] : json_encode($response['body']);

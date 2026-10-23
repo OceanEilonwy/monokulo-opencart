@@ -94,7 +94,7 @@ final class WebhookTest extends ShopTestCase {
 		$this->assertSame(['2', '1', 'Your Monero payment has arrived. Thank you!'], array_values($history[0]));
 		$this->assertSame('0', $history[1]['notify']);
 		$this->assertStringContainsString('Monokulo: paid in full.', $history[1]['comment']);
-		$this->assertStringContainsString(self::$monokulo->url . '/dashboard/stores/917701c2-15c7-4bcb-bbc8-72d9ab28e785/orders/' . Vectors::orderId(), $history[1]['comment']);
+		$this->assertStringContainsString(self::$monokulo->url . '/stores/917701c2-15c7-4bcb-bbc8-72d9ab28e785/orders/' . Vectors::orderId(), $history[1]['comment']);
 	}
 
 	public function test_paid_in_xmr_is_paid_too(): void {
@@ -159,7 +159,7 @@ final class WebhookTest extends ShopTestCase {
 		foreach (Vectors::deliveries() as $name => $delivery) {
 			$this->assertSame(200, $this->deliver($delivery['body'], $delivery['headers']['X-Monokulo-Signature']), $name);
 		}
-		$this->assertCount(1 + count(Vectors::deliveries()) + 3, $this->history($this->orderId), 'one entry each, two for each paid');
+		$this->assertCount(1 + count(Vectors::deliveries()) + 1, $this->history($this->orderId), 'one entry each, and the customer told once, on the first payment');
 		$this->assertSame(2, $this->orderStatus($this->orderId));
 	}
 
@@ -216,15 +216,128 @@ final class WebhookTest extends ShopTestCase {
 	}
 
 	/**
-	 * The customer changed the order after a first payment request, so a
-	 * newer one exists. The older one being paid doesn't mark the order paid.
+	 * Monokulo's delivery `name`, as if about Monokulo order `monokuloOrderId`
+	 * instead (a new event id), signed as Monokulo signs.
 	 */
-	public function test_paying_an_older_request_is_flagged_not_marked_paid(): void {
+	private function deliverFor(string $name, string $monokuloOrderId): int {
+		$data = json_decode(Vectors::delivery($name)['body'], true);
+		$data['order_id'] = $monokuloOrderId;
+		$data['event_id'] = 'evt_' . bin2hex(random_bytes(8));
+		$body = (string)json_encode($data);
+		$t = Vectors::sentAt();
+
+		return $this->deliver($body, 't=' . $t . ',v1=' . hash_hmac('sha256', $t . '.' . $body, Vectors::secret()));
+	}
+
+	/**
+	 * The customer was sent to pay again (the total changed), so the order
+	 * has a newer Monokulo order, and the vectors' one is an earlier one.
+	 */
+	private function sentToPayAgain(): void {
 		$this->repository()->recordOrder('ord_newer', $this->orderId, 0, self::HOST, '120.00', 'USD', 1760000001);
+	}
+
+	/** Every Monokulo order the shop order had is known: an earlier one's webhook is taken, not refused. */
+	public function test_an_earlier_monokulo_order_is_still_this_orders(): void {
+		$this->sentToPayAgain();
+
+		$this->assertSame(200, $this->deliverVector('order.confirming'));
+		$this->assertSame(200, $this->deliverFor('order.confirming', 'ord_newer'));
+		$this->assertSame(404, $this->deliverFor('order.confirming', 'ord_someone_elses'));
+	}
+
+	/** Money arriving on an earlier Monokulo order pays the order: it arrived. */
+	public function test_paying_an_earlier_request_marks_the_order_paid(): void {
+		$this->sentToPayAgain();
 
 		$this->assertSame(200, $this->deliverVector('order.paid'));
+
+		$this->assertSame(2, $this->orderStatus($this->orderId));
+		$history = array_slice($this->history($this->orderId), -2);
+		$this->assertSame(['2', '1', 'Your Monero payment has arrived. Thank you!'], array_values($history[0]));
+		$this->assertStringContainsString('Monokulo: paid in full.', $history[1]['comment']);
+		$this->assertStringContainsString('earlier payment request for this order', $history[1]['comment']);
+	}
+
+	public static function notPayments(): array {
+		return [
+			'expired'   => ['order.expired', 'payment window closed'],
+			'part paid' => ['order.partial', 'part of the amount due has arrived'],
+			'seen'      => ['order.confirming', 'waiting for confirmations'],
+		];
+	}
+
+	/** Anything but a payment on an earlier Monokulo order is a note: the newest one decides the status. */
+	#[\PHPUnit\Framework\Attributes\DataProvider('notPayments')]
+	public function test_an_earlier_requests_other_events_are_notes_only(string $event, string $note): void {
+		$this->sentToPayAgain();
+		// Statuses unlike the order's Pending, so any change would show.
+		$this->setting('payment_monokulo_waiting_status_id', '15');
+		$this->setting('payment_monokulo_partial_status_id', '15');
+
+		$this->assertSame(200, $this->deliverVector($event));
+
 		$this->assertSame(1, $this->orderStatus($this->orderId));
-		$this->assertStringContainsString('older payment request for this order was paid', $this->lastHistory()['comment']);
+		$last = $this->lastHistory();
+		$this->assertSame(['1', '0'], [$last['order_status_id'], $last['notify']]);
+		$this->assertStringContainsString($note, $last['comment']);
+		$this->assertStringContainsString('earlier payment request', $last['comment']);
+		$this->assertStringContainsString('newest payment request decides its status', $last['comment']);
+	}
+
+	/** The newest Monokulo order's events still move the order. */
+	public function test_the_newest_requests_events_move_the_order(): void {
+		$this->sentToPayAgain();
+
+		$this->assertSame(200, $this->deliverFor('order.expired', 'ord_newer'));
+
+		$this->assertSame(14, $this->orderStatus($this->orderId));
+		$this->assertStringNotContainsString('earlier payment request', $this->lastHistory()['comment']);
+	}
+
+	/**
+	 * Paid twice (both Monokulo orders paid): the order stays paid, the
+	 * customer isn't told again, and the merchant gets a note to refund.
+	 */
+	public function test_a_second_payment_is_a_note_for_the_merchant(): void {
+		$this->sentToPayAgain();
+		$this->assertSame(200, $this->deliverFor('order.paid', 'ord_newer'));
+		$before = count($this->history($this->orderId));
+
+		$this->assertSame(200, $this->deliverVector('order.paid'));
+
+		$this->assertSame(2, $this->orderStatus($this->orderId));
+		$history = $this->history($this->orderId);
+		$this->assertCount($before + 1, $history, 'one note, no message to the customer');
+		$this->assertSame(['2', '0'], [end($history)['order_status_id'], end($history)['notify']]);
+		$this->assertStringContainsString('already paid, so this is more money than it needed', end($history)['comment']);
+	}
+
+	/** More money on the same Monokulo order after it was paid: a note too. */
+	public function test_an_overpayment_after_paid_is_a_note(): void {
+		$this->deliverVector('order.paid');
+		$before = count($this->history($this->orderId));
+
+		$this->assertSame(200, $this->deliverVector('order.overpaid'));
+
+		$this->assertSame(2, $this->orderStatus($this->orderId));
+		$this->assertCount($before + 1, $this->history($this->orderId));
+		$this->assertStringContainsString('more than the amount due', $this->lastHistory()['comment']);
+		$this->assertStringContainsString('refund it from your wallet', $this->lastHistory()['comment']);
+	}
+
+	/** Nothing an earlier Monokulo order says moves a paid order back. */
+	public function test_a_paid_order_never_goes_back_whichever_request_speaks(): void {
+		$this->sentToPayAgain();
+		$this->deliverFor('order.paid', 'ord_newer');
+
+		foreach (['order.expired', 'order.partial', 'order.confirming'] as $event) {
+			$this->assertSame(200, $this->deliverVector($event));
+			$this->assertSame(2, $this->orderStatus($this->orderId), $event);
+		}
+		$this->assertSame(200, $this->deliverFor('order.expired', 'ord_newer'));
+		$this->assertSame(2, $this->orderStatus($this->orderId));
+		$this->assertStringContainsString('already paid', $this->lastHistory()['comment']);
 	}
 
 	/** Applying fails (no status chosen): 500, and the event is given back so the retry applies it. */

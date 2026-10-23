@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace Monokulo\OpenCart;
 
 /**
- * The body of `POST /pay/{pk}/orders` for one OpenCart order.
+ * The body of the API's `create-order` form for one OpenCart order.
  *
  * The amount is the order total in the currency the customer saw, and
  * Monokulo converts it to XMR at its own rate: the shop never converts.
@@ -36,14 +36,15 @@ final class OrderRequest {
 	}
 
 	/**
-	 * The total as a decimal string, with the currency's decimal places (at
-	 * least 2; XMR up to 12).
+	 * The total as a plain decimal string in the currency's own decimal
+	 * places (2 for EUR, 0 for JPY; XMR up to 12), without trailing zeros:
+	 * `12.5`, `1000`. Never padded: Monokulo may refuse more places than a
+	 * currency has, even zeros.
 	 */
 	public static function amount(float $total, string $currency, int $decimals): string {
-		$max = strtoupper($currency) === 'XMR' ? 12 : 8;
-		$decimals = max(2, min($max, $decimals));
+		$amount = number_format($total, max(0, min(12, $decimals)), '.', '');
 
-		return number_format($total, $decimals, '.', '');
+		return str_contains($amount, '.') ? rtrim(rtrim($amount, '0'), '.') : $amount;
 	}
 
 	/**

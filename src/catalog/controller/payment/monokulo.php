@@ -81,13 +81,13 @@ class Monokulo extends \Opencart\System\Engine\Controller {
 				$this->log()->error(sprintf('Creating the Monokulo order for order %d failed: HTTP %d: %s%s', $order_id, $e->status, $e->detail, $e->merchantHint()));
 				$json['error'] = $this->language->get($e->customerMessageKey());
 			} catch (TransportError $e) {
-				$this->log()->error(sprintf('Creating the Monokulo order for order %d failed: could not reach %s: %s', $order_id, $connection->ordersUrl(), $e->getMessage()));
+				$this->log()->error(sprintf('Creating the Monokulo order for order %d failed: could not reach %s: %s', $order_id, $connection->api, $e->getMessage()));
 				$json['error'] = $this->language->get('error_unreachable');
 			}
 		}
 
 		if (!$json) {
-			$checkout = $connection->checkoutUrl($monokulo_order['order_id']);
+			$checkout = $monokulo_order['checkout_url'];
 
 			$this->model_extension_monokulo_payment_monokulo->repository()->recordOrder($monokulo_order['order_id'], $order_id, (int)$order_info['store_id'], $connection->host, $body['amount'], $body['currency'], time());
 			$this->model_checkout_order->addHistory($order_id, (int)$this->config->get('payment_monokulo_pending_status_id'), sprintf($this->language->get('note_started'), $checkout), true);
@@ -192,7 +192,7 @@ class Monokulo extends \Opencart\System\Engine\Controller {
 			return 'monokulo_connect_error=unreachable';
 		}
 
-		$model->repository()->saveConnection(new Connection($host, $credentials['endpoint'], $credentials['public_key'], $credentials['secret_token'], $credentials['webhook_signing_secret'], time()));
+		$model->repository()->saveConnection(new Connection($host, $credentials['api'], $credentials['public_key'], $credentials['secret_token'], $credentials['webhook_signing_secret'], time()));
 		$model->enable();
 		$this->log()->info(sprintf('%s connected to Monokulo as %s.', $host, $credentials['public_key']));
 

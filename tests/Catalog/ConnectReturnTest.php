@@ -31,7 +31,7 @@ final class ConnectReturnTest extends ShopTestCase {
 		self::$monokulo->respond('POST', '/plugins/connect/opencart/finish', $status, $body);
 	}
 
-	private const CREDENTIALS = ['public_key' => 'pk_new', 'secret_token' => 'sk_new', 'endpoint' => 'https://pay.example.com', 'webhook_signing_secret' => 'whsec_new'];
+	private const CREDENTIALS = ['public_key' => 'pk_new', 'secret_token' => 'sk_new', 'api' => '/api/v1', 'webhook_signing_secret' => 'whsec_new'];
 
 	public function test_a_good_return_connects_the_store_and_turns_monero_on(): void {
 		$this->setting('payment_monokulo_status', '0');
@@ -49,7 +49,7 @@ final class ConnectReturnTest extends ShopTestCase {
 		$this->assertSame('opencart/' . Plugin::VERSION, $request['headers']['monokulo-client']);
 
 		$connection = $this->repository()->connection(self::HOST);
-		$this->assertSame(['https://pay.example.com', 'pk_new', 'sk_new', 'whsec_new'], [$connection->endpoint, $connection->publicKey, $connection->secretToken, $connection->webhookSecret]);
+		$this->assertSame([self::$monokulo->url . '/api/v1', 'pk_new', 'sk_new', 'whsec_new'], [$connection->api, $connection->publicKey, $connection->secretToken, $connection->webhookSecret]);
 		$this->assertSame('1', $this->rows("SELECT `value` FROM `" . DB_PREFIX . "setting` WHERE `store_id` = 0 AND `key` = 'payment_monokulo_status'")[0]['value']);
 	}
 
@@ -136,7 +136,7 @@ final class ConnectReturnTest extends ShopTestCase {
 		return [
 			'no public address yet' => [503, ['error' => 'no public address'], 'unavailable'],
 			'token refused'         => [401, '', 'finish'],
-			'missing secret'        => [200, ['public_key' => 'pk', 'secret_token' => 'sk', 'endpoint' => 'https://x'], 'finish'],
+			'missing secret'        => [200, ['public_key' => 'pk', 'secret_token' => 'sk', 'api' => '/api/v1'], 'finish'],
 		];
 	}
 

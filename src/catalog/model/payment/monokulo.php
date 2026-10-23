@@ -108,18 +108,16 @@ class Monokulo extends \Opencart\System\Engine\Model {
 				$current = (int)$order['order_status_id'];
 				$link = $event->storeId ? sprintf($language->get('text_see_in_monokulo'), $connection->dashboardOrderUrl($event->storeId, $event->orderId)) : '';
 
-				// Paid, but not the order's newest payment request: the total changed
-				// since. Tell the merchant instead of marking it paid.
-				if ($decision->paid && !$latest) {
-					$orders->addHistory($orderId, $current, $language->get('note_superseded') . $link);
-
-					return;
-				}
-
 				$note = $language->get($decision->note);
 
 				if (str_contains($note, '%s')) {
 					$note = sprintf($note, $event->txid ?? $language->get('note_unknown_transaction'));
+				}
+
+				// An event about one of the order's earlier Monokulo orders (the
+				// customer was sent to pay again since) says so.
+				if (!$latest) {
+					$note .= ' ' . $language->get('note_earlier_request');
 				}
 
 				if ($decision->status === null) {
@@ -134,13 +132,22 @@ class Monokulo extends \Opencart\System\Engine\Model {
 					throw new \RuntimeException('no order status is set for "' . $decision->status . '"');
 				}
 
-				// A paid order stays paid: a later event (expired, partial) only
-				// adds a note. Paid means the merchant's Paid status, or one of
-				// OpenCart's complete statuses (the merchant moved it on).
+				// A paid order never goes back: a later event only adds a note, and
+				// another payment (an overpayment, a second order paid) is the
+				// merchant's to refund. Paid means the merchant's Paid status, or
+				// one of OpenCart's complete statuses (the merchant moved it on).
 				$paid = array_map('intval', array_merge([(int)$config->get('payment_monokulo_paid_status_id')], (array)$config->get('config_complete_status')));
 
-				if (!$decision->paid && in_array($current, $paid, true)) {
-					$orders->addHistory($orderId, $current, $note . ' ' . $language->get('note_kept_paid') . $link);
+				if (in_array($current, $paid, true)) {
+					$orders->addHistory($orderId, $current, $note . ' ' . $language->get($decision->paid ? 'note_paid_again' : 'note_kept_paid') . $link);
+
+					return;
+				}
+
+				// Money arriving on any of the order's Monokulo orders pays it; any
+				// other change on an earlier one leaves the status to the current one.
+				if (!$decision->paid && !$latest) {
+					$orders->addHistory($orderId, $current, $note . ' ' . $language->get('note_not_current') . $link);
 
 					return;
 				}

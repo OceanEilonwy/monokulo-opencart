@@ -37,11 +37,75 @@ final class FakeMonokulo {
 		throw new \RuntimeException('the fake Monokulo did not start: ' . (string)@file_get_contents($this->dir . '/server.log'));
 	}
 
-	/** Answers `METHOD path` with `status` and `body` (a string, or JSON-encoded). */
-	public function respond(string $method, string $path, int $status, mixed $body, int $delaySeconds = 0): void {
+	/**
+	 * Answers `METHOD path` with `status` and `body` (a string, or
+	 * JSON-encoded), as `application/json` unless `headers` say otherwise.
+	 *
+	 * @param array<string, string>|null $headers
+	 */
+	public function respond(string $method, string $path, int $status, mixed $body, int $delaySeconds = 0, ?array $headers = null): void {
 		$responses = is_file($this->dir . '/responses.json') ? json_decode((string)file_get_contents($this->dir . '/responses.json'), true) : [];
-		$responses[$method . ' ' . $path] = ['status' => $status, 'body' => $body, 'delay' => $delaySeconds];
+		$responses[$method . ' ' . $path] = ['status' => $status, 'body' => $body, 'delay' => $delaySeconds] + ($headers !== null ? ['headers' => $headers] : []);
 		file_put_contents($this->dir . '/responses.json', json_encode($responses));
+	}
+
+	/**
+	 * The API's entry at `/api/v1`, as Monokulo shows it to a store's secret
+	 * key: its links and the `create-order` form, whose target is `/api/v1/orders`.
+	 */
+	public function serveEntry(): void {
+		$this->respond('GET', '/api/v1', 200, self::entry(), headers: ['Content-Type' => 'application/prs.hal-forms+json']);
+	}
+
+	/** @return array<string, mixed> the entry's body, the shape Monokulo's has (the smoke test checks it against Monokulo's OpenAPI) */
+	public static function entry(): array {
+		return [
+			'_links'     => [
+				'self'      => ['href' => '/api/v1'],
+				'mk:orders' => ['href' => '/api/v1/orders'],
+				'curies'    => [['name' => 'mk', 'href' => 'https://docs.monokulo.com/rels/{rel}', 'templated' => true]],
+			],
+			'_templates' => [
+				'create-order' => ['method' => 'POST', 'target' => '/api/v1/orders', 'contentType' => 'application/json', 'properties' => []],
+			],
+		];
+	}
+
+	/** Makes `POST /api/v1/orders` answer 201 with order `orderId`, as Monokulo does. */
+	public function createsOrder(string $orderId): void {
+		$this->respond('POST', '/api/v1/orders', 201, self::order($orderId), headers: ['Content-Type' => 'application/prs.hal-forms+json', 'Location' => '/api/v1/orders/' . $orderId]);
+	}
+
+	/** @return array<string, mixed> an order's body, the shape Monokulo's has (the smoke test checks it against Monokulo's OpenAPI) */
+	public static function order(string $orderId): array {
+		return [
+			'order_id'                 => $orderId,
+			'status'                   => 'pending',
+			'is_final'                 => false,
+			'address'                  => '8...',
+			'xmr_amount_piconero'      => 1,
+			'amount_received_piconero' => 0,
+			'amount'                   => '1',
+			'currency'                 => 'EUR',
+			'merchant_order_id'        => '1',
+			'description'              => 'Order #1',
+			'show_merchant_order_id'   => false,
+			'confirmations'            => 0,
+			'confirmations_required'   => 10,
+			'created_at'               => 1,
+			'expires_at'               => 2,
+			'_links'                   => [
+				'self'            => ['href' => '/api/v1/orders/' . $orderId],
+				'collection'      => ['href' => '/api/v1/orders'],
+				'mk:checkout'     => ['href' => '/checkout/' . $orderId],
+				'mk:order-events' => ['href' => '/api/v1/orders/' . $orderId . '/events'],
+			],
+		];
+	}
+
+	/** Makes `METHOD path` answer with a problem (`application/problem+json`). */
+	public function problem(string $method, string $path, int $status, string $name, string $detail): void {
+		$this->respond($method, $path, $status, ['type' => 'https://docs.monokulo.com/problems/' . $name, 'title' => 'A problem', 'status' => $status, 'detail' => $detail], headers: ['Content-Type' => 'application/problem+json']);
 	}
 
 	/** @return list<array{method: string, path: string, query: string, headers: array<string, string>, body: string}> */
