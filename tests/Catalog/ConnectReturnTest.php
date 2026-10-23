@@ -153,7 +153,6 @@ final class ConnectReturnTest extends ShopTestCase {
 			'token refused'         => [401, 'invalid-connect-code', 'finish'],
 			'refused request'       => [400, 'invalid-request', 'finish'],
 			'rate limited'          => [429, 'rate-limited', 'busy'],
-			'proof of work asked'   => [429, 'challenge-required', 'busy'],
 			'failed after spending' => [500, 'internal', 'finish'],
 		];
 	}

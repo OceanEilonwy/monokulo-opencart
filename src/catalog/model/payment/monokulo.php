@@ -90,7 +90,7 @@ class Monokulo extends \Opencart\System\Engine\Model {
 			public function __construct(private readonly \Opencart\System\Engine\Registry $registry) {
 			}
 
-			public function apply(int $orderId, Decision $decision, WebhookEvent $event, bool $latest, string $dashboardUrl): void {
+			public function apply(int $orderId, Decision $decision, WebhookEvent $event, bool $latest): void {
 				$load = $this->registry->get('load');
 				$config = $this->registry->get('config');
 				$language = $this->registry->get('language');
@@ -106,7 +106,8 @@ class Monokulo extends \Opencart\System\Engine\Model {
 				}
 
 				$current = (int)$order['order_status_id'];
-				$link = $dashboardUrl !== '' ? sprintf($language->get('text_see_in_monokulo'), $dashboardUrl) : '';
+				// The order's page on the merchant's dashboard, as this event links it.
+				$link = $event->dashboardUrl !== '' ? sprintf($language->get('text_see_in_monokulo'), $event->dashboardUrl) : '';
 
 				$note = $language->get($decision->note);
 

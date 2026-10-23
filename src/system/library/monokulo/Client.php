@@ -75,12 +75,12 @@ final class Client {
 	 * Makes an order with the entry's `create-order` form and the store's
 	 * secret key. Returns its id; its `mk:checkout` page, where the customer
 	 * pays; its `mk:onion-checkout`, the same page on Monokulo's onion
-	 * address (`''` when Monokulo has none); and its `mk:dashboard-order`,
-	 * the order's page for the merchant (`''` if Monokulo gave none).
+	 * address (`''` when Monokulo has none). The order's page for the
+	 * merchant comes with each of its webhooks.
 	 *
 	 * @param array<string, mixed> $body see OrderRequest
 	 *
-	 * @return array{order_id: string, checkout_url: string, onion_checkout_url: string, dashboard_url: string}
+	 * @return array{order_id: string, checkout_url: string, onion_checkout_url: string}
 	 *
 	 * @throws ApiError|TransportError
 	 */
@@ -101,7 +101,6 @@ final class Client {
 			'order_id'           => $order['order_id'],
 			'checkout_url'       => $checkout,
 			'onion_checkout_url' => $link('mk:onion-checkout'),
-			'dashboard_url'      => $link('mk:dashboard-order'),
 		];
 	}
 
@@ -292,7 +291,9 @@ final class Client {
 	/**
 	 * The JSON object an `expected` answer carries. Anything else is an
 	 * ApiError: a problem (`application/problem+json`) by its `detail` (or
-	 * `title`) and the name in its `type`, anything else by its body.
+	 * `title`), the name in its `type` and how long to wait before trying
+	 * again (`retry_after`, or the answer's `Retry-After` in seconds),
+	 * anything else by its body.
 	 *
 	 * @return array<string, mixed>
 	 *
@@ -306,7 +307,10 @@ final class Client {
 			$type = $text('type');
 			$name = $type !== null ? basename((string)parse_url($type, PHP_URL_PATH)) : '';
 
-			throw new ApiError($response->status, $text('detail') ?? $text('title') ?? $response->body, $name);
+			$wait = $problem['retry_after'] ?? $response->header('retry-after');
+			$wait = is_int($wait) || (is_string($wait) && ctype_digit($wait)) ? (int)$wait : null;
+
+			throw new ApiError($response->status, $text('detail') ?? $text('title') ?? $response->body, $name, $wait);
 		}
 		if (!is_array($data)) {
 			throw new ApiError($response->status, 'not JSON: ' . $response->body);

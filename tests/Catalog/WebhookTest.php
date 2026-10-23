@@ -24,14 +24,11 @@ final class WebhookTest extends ShopTestCase {
 		parent::setUp();
 		$this->connect();
 		$this->orderId = $this->order(100.0, 'USD');
-		// As confirm leaves it: placed, mapped to the Monokulo order the vectors are about, with its dashboard page.
-		$this->repository()->recordOrder(Vectors::orderId(), $this->orderId, 0, self::HOST, '100.00', 'USD', self::DASHBOARD . Vectors::orderId(), 1760000000);
+		// As confirm leaves it: placed, and mapped to the Monokulo order the vectors are about.
+		$this->repository()->recordOrder(Vectors::orderId(), $this->orderId, 0, self::HOST, '100.00', 'USD', 1760000000);
 		$this->registry()->get('load')->model('checkout/order');
 		$this->registry()->get('model_checkout_order')->addHistory($this->orderId, 1, 'placed');
 	}
-
-	/** Where the stand-in's orders are on the merchant's dashboard (an order's `mk:dashboard-order`), less the order's id. */
-	private const DASHBOARD = 'https://pay.example.com/monokulo/stores/st_1/orders/';
 
 	private ?\Opencart\System\Engine\Registry $registry = null;
 
@@ -63,6 +60,19 @@ final class WebhookTest extends ShopTestCase {
 		return $this->deliver($delivery['body'], $delivery['headers']['X-Monokulo-Signature']);
 	}
 
+	/** Delivers the body `data`, signed as Monokulo signs, at the vectors' clock. */
+	private function deliverSigned(array $data): int {
+		$body = (string)json_encode($data);
+		$t = Vectors::sentAt();
+
+		return $this->deliver($body, 't=' . $t . ',v1=' . hash_hmac('sha256', $t . '.' . $body, Vectors::secret()));
+	}
+
+	/** The order's page on the merchant's dashboard, as the vectors' webhooks link it. */
+	private static function dashboard(): string {
+		return json_decode(Vectors::delivery('order.paid')['body'], true)['_links']['mk:dashboard-order']['href'];
+	}
+
 	/** @return array{order_status_id: string, notify: string, comment: string} */
 	private function lastHistory(): array {
 		$history = $this->history($this->orderId);
@@ -88,7 +98,7 @@ final class WebhookTest extends ShopTestCase {
 		$this->assertStringContainsString('part of the amount due has arrived', $this->lastHistory()['comment']);
 	}
 
-	/** Paid: the paid status, the customer told, and the merchant's note with the dashboard link. */
+	/** Paid: the paid status, the customer told, and the merchant's note with the webhook's dashboard link. */
 	public function test_paid_moves_the_order_to_paid_and_tells_the_customer(): void {
 		$this->assertSame(200, $this->deliverVector('order.paid'));
 
@@ -97,16 +107,37 @@ final class WebhookTest extends ShopTestCase {
 		$this->assertSame(['2', '1', 'Your Monero payment has arrived. Thank you!'], array_values($history[0]));
 		$this->assertSame('0', $history[1]['notify']);
 		$this->assertStringContainsString('Monokulo: paid in full.', $history[1]['comment']);
-		$this->assertStringEndsWith(' In Monokulo: ' . self::DASHBOARD . Vectors::orderId(), $history[1]['comment']);
+		$this->assertSame(' In Monokulo: ' . self::dashboard(), substr($history[1]['comment'], strlen('Monokulo: paid in full.')));
+		$this->assertStringStartsWith('https://', self::dashboard());
 	}
 
-	/** An order made before the extension kept its dashboard page: the note goes without the link. */
-	public function test_an_order_without_a_dashboard_page_gets_its_note_without_a_link(): void {
-		$this->db()->query("UPDATE `" . DB_PREFIX . "monokulo_order` SET `dashboard_url` = ''");
+	/** Every event links the order's dashboard page, whatever it is about (a double spend, an expiry). */
+	public function test_every_note_links_the_dashboard_page(): void {
+		foreach (['order.confirming', 'order.double_spend_detected', 'order.expired', 'order.cancelled'] as $event) {
+			$this->assertSame(200, $this->deliverVector($event));
+			$this->assertStringEndsWith(' In Monokulo: ' . self::dashboard(), $this->lastHistory()['comment'], $event);
+		}
+	}
 
-		$this->assertSame(200, $this->deliverVector('order.paid'));
+	/** A webhook that links no dashboard page (or not on the web): the note goes without a link. */
+	public function test_a_webhook_without_a_dashboard_page_gets_its_note_without_a_link(): void {
+		$data = json_decode(Vectors::delivery('order.paid')['body'], true);
+		unset($data['_links']['mk:dashboard-order']);
+		$this->assertSame(200, $this->deliverSigned($data));
+		$this->assertSame('Monokulo: paid in full.', $this->lastHistory()['comment']);
 
-		$this->assertSame('Monokulo: paid in full.', array_slice($this->history($this->orderId), -1)[0]['comment']);
+		$data = json_decode(Vectors::delivery('order.overpaid')['body'], true);
+		$data['_links']['mk:dashboard-order']['href'] = 'javascript:alert(1)';
+		$this->assertSame(200, $this->deliverSigned($data));
+		$this->assertStringNotContainsString('In Monokulo', $this->lastHistory()['comment']);
+	}
+
+	/** From a Monokulo with an onion address: paid all the same, with the web dashboard link. */
+	public function test_paid_from_a_monokulo_with_an_onion_address(): void {
+		$this->assertSame(200, $this->deliverVector('order.paid from a Monokulo with an onion address'));
+
+		$this->assertSame(2, $this->orderStatus($this->orderId));
+		$this->assertStringEndsWith(' In Monokulo: ' . self::dashboard(), $this->lastHistory()['comment']);
 	}
 
 	public function test_paid_in_xmr_is_paid_too(): void {
@@ -125,6 +156,22 @@ final class WebhookTest extends ShopTestCase {
 		$this->assertSame(200, $this->deliverVector('order.expired'));
 		$this->assertSame(14, $this->orderStatus($this->orderId));
 		$this->assertStringContainsString('payment window closed', $this->lastHistory()['comment']);
+	}
+
+	/** Cancelled (only the POS cancels, but a shop order is handled anyway): as expired, with its own note. */
+	public function test_cancelled_goes_to_expired(): void {
+		$this->assertSame(200, $this->deliverVector('order.cancelled'));
+		$this->assertSame(14, $this->orderStatus($this->orderId));
+		$this->assertStringContainsString('was cancelled in Monokulo before it was paid', $this->lastHistory()['comment']);
+	}
+
+	/** Paid after it was cancelled (money sent anyway): paid, as for an expired order paid late. */
+	public function test_a_cancelled_order_paid_late_is_paid(): void {
+		$this->deliverVector('order.cancelled');
+
+		$this->assertSame(200, $this->deliverVector('order.paid'));
+
+		$this->assertSame(2, $this->orderStatus($this->orderId));
 	}
 
 	/** A double spend only adds a note: the status change, if any, comes as its own event. */
@@ -149,6 +196,7 @@ final class WebhookTest extends ShopTestCase {
 		$this->deliverVector('order.paid');
 
 		$this->assertSame(200, $this->deliverVector('order.partial'));
+		$this->assertSame(200, $this->deliverVector('order.cancelled'));
 		$this->assertSame(200, $this->deliverVector('order.expired'));
 
 		$this->assertSame(2, $this->orderStatus($this->orderId));
@@ -160,10 +208,11 @@ final class WebhookTest extends ShopTestCase {
 	public function test_a_completed_order_is_not_moved_back(): void {
 		$this->registry()->get('model_checkout_order')->addHistory($this->orderId, 5, 'completed by hand');
 
-		$this->assertSame(200, $this->deliverVector('order.expired'));
-
-		$this->assertSame(5, $this->orderStatus($this->orderId));
-		$this->assertStringContainsString('already paid', $this->lastHistory()['comment']);
+		foreach (['order.expired', 'order.cancelled'] as $event) {
+			$this->assertSame(200, $this->deliverVector($event));
+			$this->assertSame(5, $this->orderStatus($this->orderId), $event);
+			$this->assertStringContainsString('already paid', $this->lastHistory()['comment']);
+		}
 	}
 
 	/** Every published delivery, in order, on one order: each applies once, and the order ends paid. */
@@ -229,16 +278,13 @@ final class WebhookTest extends ShopTestCase {
 
 	/**
 	 * Monokulo's delivery `name`, as if about Monokulo order `monokuloOrderId`
-	 * instead (a new event id), signed as Monokulo signs.
+	 * instead (a new event id, and its own links), signed as Monokulo signs.
 	 */
 	private function deliverFor(string $name, string $monokuloOrderId): int {
-		$data = json_decode(Vectors::delivery($name)['body'], true);
-		$data['order_id'] = $monokuloOrderId;
+		$data = json_decode(str_replace(Vectors::orderId(), $monokuloOrderId, Vectors::delivery($name)['body']), true);
 		$data['event_id'] = 'evt_' . bin2hex(random_bytes(8));
-		$body = (string)json_encode($data);
-		$t = Vectors::sentAt();
 
-		return $this->deliver($body, 't=' . $t . ',v1=' . hash_hmac('sha256', $t . '.' . $body, Vectors::secret()));
+		return $this->deliverSigned($data);
 	}
 
 	/**
@@ -246,7 +292,7 @@ final class WebhookTest extends ShopTestCase {
 	 * has a newer Monokulo order, and the vectors' one is an earlier one.
 	 */
 	private function sentToPayAgain(): void {
-		$this->repository()->recordOrder('ord_newer', $this->orderId, 0, self::HOST, '120.00', 'USD', self::DASHBOARD . 'ord_newer', 1760000001);
+		$this->repository()->recordOrder('ord_newer', $this->orderId, 0, self::HOST, '120.00', 'USD', 1760000001);
 	}
 
 	/** Every Monokulo order the shop order had is known: an earlier one's webhook is taken, not refused. */
@@ -274,6 +320,7 @@ final class WebhookTest extends ShopTestCase {
 	public static function notPayments(): array {
 		return [
 			'expired'   => ['order.expired', 'payment window closed'],
+			'cancelled' => ['order.cancelled', 'was cancelled in Monokulo'],
 			'part paid' => ['order.partial', 'part of the amount due has arrived'],
 			'seen'      => ['order.confirming', 'waiting for confirmations'],
 		];
@@ -305,6 +352,7 @@ final class WebhookTest extends ShopTestCase {
 
 		$this->assertSame(14, $this->orderStatus($this->orderId));
 		$this->assertStringNotContainsString('earlier payment request', $this->lastHistory()['comment']);
+		$this->assertStringEndsWith('/orders/ord_newer', $this->lastHistory()['comment'], 'linked to the newer order\'s own page');
 	}
 
 	/**
@@ -343,13 +391,15 @@ final class WebhookTest extends ShopTestCase {
 		$this->sentToPayAgain();
 		$this->deliverFor('order.paid', 'ord_newer');
 
-		foreach (['order.expired', 'order.partial', 'order.confirming'] as $event) {
+		foreach (['order.expired', 'order.cancelled', 'order.partial', 'order.confirming'] as $event) {
 			$this->assertSame(200, $this->deliverVector($event));
 			$this->assertSame(2, $this->orderStatus($this->orderId), $event);
 		}
-		$this->assertSame(200, $this->deliverFor('order.expired', 'ord_newer'));
-		$this->assertSame(2, $this->orderStatus($this->orderId));
-		$this->assertStringContainsString('already paid', $this->lastHistory()['comment']);
+		foreach (['order.expired', 'order.cancelled'] as $event) {
+			$this->assertSame(200, $this->deliverFor($event, 'ord_newer'));
+			$this->assertSame(2, $this->orderStatus($this->orderId), $event);
+			$this->assertStringContainsString('already paid', $this->lastHistory()['comment']);
+		}
 	}
 
 	/** Applying fails (no status chosen): 500, and the event is given back so the retry applies it. */

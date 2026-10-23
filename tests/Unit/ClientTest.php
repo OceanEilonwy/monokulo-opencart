@@ -120,7 +120,7 @@ final class ClientTest extends TestCase {
 		}
 	}
 
-	/** The entry with the key, then its create-order form; the checkout and the dashboard page are the order's links. */
+	/** The entry with the key, then its create-order form; the checkout is the order's link. */
 	public function test_creating_an_order_follows_the_entrys_form_with_the_secret_key(): void {
 		self::$monokulo->serveEntry();
 		self::$monokulo->createsOrder('order_1');
@@ -131,7 +131,6 @@ final class ClientTest extends TestCase {
 			'order_id'           => 'order_1',
 			'checkout_url'       => self::$monokulo->url . '/checkout/order_1',
 			'onion_checkout_url' => '',
-			'dashboard_url'      => self::$monokulo->url . '/stores/' . FakeMonokulo::STORE_ID . '/orders/order_1',
 		], $order);
 		[$entry, $create] = self::$monokulo->requests();
 		$this->assertSame(['GET', '/api/v1'], [$entry['method'], $entry['path']]);
@@ -195,7 +194,6 @@ final class ClientTest extends TestCase {
 		$this->client()->forwardLogs($this->connection('/monokulo'), [['level' => 'error', 'message' => 'm', 'trace_id' => 'x']]);
 
 		$this->assertSame(self::$monokulo->url . '/monokulo/checkout/order_1', $order['checkout_url']);
-		$this->assertSame(self::$monokulo->url . '/monokulo/stores/' . FakeMonokulo::STORE_ID . '/orders/order_1', $order['dashboard_url']);
 		$this->assertSame(['GET /monokulo/api/v1', 'POST /monokulo/api/v1/orders', 'POST /monokulo/api/v1/logs'], $this->requested());
 	}
 
@@ -315,6 +313,7 @@ final class ClientTest extends TestCase {
 		return [
 			'rate limited'   => [429, $problem('rate-limited', 'slow down'), 'slow down', 'rate-limited', 'error_busy'],
 			'engine down'    => [503, $problem('engine-unavailable', 'busy'), 'busy', 'engine-unavailable', 'error_busy'],
+			'no rate'        => [503, $problem('rates-unavailable', 'no rate for EUR'), 'no rate for EUR', 'rates-unavailable', 'error_rates'],
 			'refused'        => [403, $problem('forbidden', 'not this key'), 'not this key', 'forbidden', 'error_unavailable'],
 			'currency'       => [400, $problem('invalid-amount', 'unsupported currency: NOK'), 'unsupported currency: NOK', 'invalid-amount', 'error_currency'],
 			'title only'     => [500, '{"type":"https://docs.monokulo.com/problems/internal","title":"Internal error"}', 'Internal error', 'internal', 'error_generic'],
@@ -368,7 +367,42 @@ final class ClientTest extends TestCase {
 		$this->assertSame([], $this->entries->kept, 'nothing kept');
 	}
 
+	/** How long to wait comes from the problem's `retry_after`, else the `Retry-After` header; neither, and it isn't known. */
+	public function test_a_problem_says_how_long_to_wait(): void {
+		$cases = [
+			'in the body'      => [['retry_after' => 30], ['Retry-After' => '30'], 30],
+			'header only'      => [[], ['Retry-After' => '12'], 12],
+			'body over header' => [['retry_after' => 5], ['Retry-After' => '60'], 5],
+			'neither'          => [[], [], null],
+			'an HTTP date'     => [[], ['Retry-After' => 'Wed, 21 Oct 2026 07:28:00 GMT'], null],
+		];
+		foreach ($cases as $name => [$fields, $headers, $wait]) {
+			self::$monokulo->serveEntry();
+			self::$monokulo->respond('POST', '/api/v1/orders', 503, (string)json_encode(['type' => 'https://docs.monokulo.com/problems/rates-unavailable', 'title' => 'No exchange rate', 'status' => 503, 'detail' => 'no rate'] + $fields), headers: ['Content-Type' => 'application/problem+json'] + $headers);
+
+			try {
+				$this->client()->createOrder($this->connection(), []);
+				$this->fail('no error');
+			} catch (ApiError $e) {
+				$this->assertSame($wait, $e->retryAfter, $name);
+				$this->assertTrue($e->retryable(), $name);
+			}
+		}
+	}
+
+	/** Only "made nothing, try again" answers may be sent again as they are. */
+	public function test_only_429_and_503_are_retryable(): void {
+		foreach ([429 => true, 503 => true, 400 => false, 401 => false, 409 => false, 500 => false, 502 => false] as $status => $retryable) {
+			$this->assertSame($retryable, (new ApiError($status, ''))->retryable(), (string)$status);
+		}
+	}
+
 	public function test_a_hint_for_the_merchant_on_the_answers_that_have_one(): void {
+		$this->assertStringContainsString('no exchange rate', (new ApiError(503, '', 'rates-unavailable'))->merchantHint());
+		$this->assertStringContainsString('No order was made', (new ApiError(503, '', 'rates-unavailable'))->merchantHint());
+		$this->assertStringEndsWith('Monokulo asked to wait 30 seconds before trying again.', (new ApiError(503, '', 'rates-unavailable', 30))->merchantHint());
+		$this->assertStringEndsWith('Monokulo asked to wait 7 seconds before trying again.', (new ApiError(503, '', 'engine-unavailable', 7))->merchantHint());
+		$this->assertStringEndsNotWith('before trying again.', (new ApiError(400, '', 'invalid-amount', 7))->merchantHint());
 		$this->assertStringContainsString('exchange rate', (new ApiError(400, '', 'invalid-amount'))->merchantHint());
 		$this->assertStringContainsString('different order', (new ApiError(409, '', 'idempotency-conflict'))->merchantHint());
 		$this->assertStringContainsString('connect the store again', (new ApiError(401, ''))->merchantHint());

@@ -9,8 +9,8 @@ namespace Monokulo\OpenCart;
  *
  * - `monokulo_connection`: one row per shop host that has connected, with
  *   the API's entry as last read for its key (see EntryStore).
- * - `monokulo_order`: each Monokulo order the shop created, which
- *   OpenCart order it pays, and its page on the merchant's dashboard. An
+ * - `monokulo_order`: each Monokulo order the shop created, and which
+ *   OpenCart order it pays. An
  *   OpenCart order can have more than one when its total changed after a
  *   first attempt; the newest is the live one.
  * - `monokulo_event`: webhook events already applied, so a delivery that is
@@ -56,7 +56,6 @@ final class Repository implements EntryStore {
 				`host` VARCHAR(255) NOT NULL,
 				`amount` VARCHAR(40) NOT NULL,
 				`currency` VARCHAR(8) NOT NULL,
-				`dashboard_url` VARCHAR(1024) NOT NULL DEFAULT '',
 				`created_at` INT(11) NOT NULL,
 				PRIMARY KEY (`monokulo_order_id`),
 				UNIQUE KEY `seq` (`seq`),
@@ -89,9 +88,8 @@ final class Repository implements EntryStore {
 	/**
 	 * Columns added since the extension's first API version made its
 	 * tables, and what they hold for what was there before: `onion_api`
-	 * is '' until the shop connects again, there is no kept entry until
-	 * the next order reads it, and orders made before have no dashboard
-	 * page (their notes go without an "In Monokulo" link).
+	 * is '' until the shop connects again, and there is no kept entry
+	 * until the next order reads it.
 	 */
 	private const ADDED = [
 		'monokulo_connection' => [
@@ -99,9 +97,6 @@ final class Repository implements EntryStore {
 			'entry'            => 'MEDIUMTEXT NULL',
 			'entry_etag'       => "VARCHAR(255) NOT NULL DEFAULT ''",
 			'entry_expires_at' => 'INT(11) NOT NULL DEFAULT 0',
-		],
-		'monokulo_order'      => [
-			'dashboard_url' => "VARCHAR(1024) NOT NULL DEFAULT '' AFTER `currency`",
 		],
 	];
 
@@ -206,20 +201,19 @@ final class Repository implements EntryStore {
 		return ['store_id' => (int)$row['store_id'], 'host' => $row['host'], 'admin_return' => $row['admin_return']];
 	}
 
-	/** `dashboardUrl` is the order's `mk:dashboard-order` page, or ''. */
-	public function recordOrder(string $monokuloOrderId, int $orderId, int $storeId, string $host, string $amount, string $currency, string $dashboardUrl, int $now): void {
+	public function recordOrder(string $monokuloOrderId, int $orderId, int $storeId, string $host, string $amount, string $currency, int $now): void {
 		$this->db->query(
-			"INSERT IGNORE INTO `{$this->prefix}monokulo_order` (`monokulo_order_id`, `order_id`, `store_id`, `host`, `amount`, `currency`, `dashboard_url`, `created_at`) VALUES ('"
+			"INSERT IGNORE INTO `{$this->prefix}monokulo_order` (`monokulo_order_id`, `order_id`, `store_id`, `host`, `amount`, `currency`, `created_at`) VALUES ('"
 			. $this->db->escape($monokuloOrderId) . "', " . $orderId . ', ' . $storeId . ", '" . $this->db->escape($host) . "', '"
-			. $this->db->escape($amount) . "', '" . $this->db->escape($currency) . "', '" . $this->db->escape($dashboardUrl) . "', " . $now . ')'
+			. $this->db->escape($amount) . "', '" . $this->db->escape($currency) . "', " . $now . ')'
 		);
 	}
 
 	/**
 	 * The OpenCart order a Monokulo order pays, whether it is that order's
-	 * newest Monokulo order, and its page on the merchant's dashboard ('').
+	 * newest Monokulo order.
 	 *
-	 * @return array{order_id: int, store_id: int, host: string, latest: bool, dashboard_url: string}|null
+	 * @return array{order_id: int, store_id: int, host: string, latest: bool}|null
 	 */
 	public function findOrder(string $monokuloOrderId): ?array {
 		$row = $this->db->query("SELECT * FROM `{$this->prefix}monokulo_order` WHERE `monokulo_order_id` = '" . $this->db->escape($monokuloOrderId) . "'")->row;
@@ -232,11 +226,10 @@ final class Repository implements EntryStore {
 		)->row;
 
 		return [
-			'order_id'      => (int)$row['order_id'],
-			'store_id'      => (int)$row['store_id'],
-			'host'          => $row['host'],
-			'latest'        => $newest && $newest['monokulo_order_id'] === $row['monokulo_order_id'],
-			'dashboard_url' => $row['dashboard_url'],
+			'order_id' => (int)$row['order_id'],
+			'store_id' => (int)$row['store_id'],
+			'host'     => $row['host'],
+			'latest'   => $newest && $newest['monokulo_order_id'] === $row['monokulo_order_id'],
 		];
 	}
 

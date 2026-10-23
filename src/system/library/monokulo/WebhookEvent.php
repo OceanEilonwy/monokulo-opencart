@@ -6,6 +6,10 @@ namespace Monokulo\OpenCart;
 /**
  * The parts of a webhook body (api_version 2) this plugin acts on. Fields it
  * doesn't need are ignored, and fields monokulo adds later don't break it.
+ *
+ * `dashboardUrl` is the order's `mk:dashboard-order` link from the body's
+ * `_links`: its page on the merchant's dashboard, absolute, on every event
+ * (or '' when a body has none, or not an http(s) address).
  */
 final class WebhookEvent {
 	private function __construct(
@@ -13,6 +17,7 @@ final class WebhookEvent {
 		public readonly string $eventId,
 		public readonly string $orderId,
 		public readonly ?string $txid,
+		public readonly string $dashboardUrl,
 	) {
 	}
 
@@ -29,6 +34,9 @@ final class WebhookEvent {
 		}
 		$text = static fn(string $key): ?string => isset($data[$key]) && is_string($data[$key]) && $data[$key] !== '' ? $data[$key] : null;
 
-		return new self($data['event'], $data['event_id'], $data['order_id'], $text('txid'));
+		$dashboard = $data['_links']['mk:dashboard-order']['href'] ?? null;
+		$dashboard = is_string($dashboard) && preg_match('#\Ahttps?://[^\s]+\z#i', $dashboard) ? $dashboard : '';
+
+		return new self($data['event'], $data['event_id'], $data['order_id'], $text('txid'), $dashboard);
 	}
 }

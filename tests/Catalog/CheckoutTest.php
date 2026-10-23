@@ -138,8 +138,7 @@ final class CheckoutTest extends ShopTestCase {
 			'host'              => self::HOST,
 			'amount'            => '89.02',
 			'currency'          => 'EUR',
-			'dashboard_url'     => self::$monokulo->url . '/stores/' . FakeMonokulo::STORE_ID . '/orders/ord_42',
-		]], $this->rows("SELECT `monokulo_order_id`, `order_id`, `store_id`, `host`, `amount`, `currency`, `dashboard_url` FROM `" . DB_PREFIX . "monokulo_order`"));
+		]], $this->rows("SELECT `monokulo_order_id`, `order_id`, `store_id`, `host`, `amount`, `currency` FROM `" . DB_PREFIX . "monokulo_order`"));
 
 		$session = $registry->get('session')->data;
 		foreach (['order_id', 'payment_method', 'comment'] as $key) {
@@ -171,7 +170,7 @@ final class CheckoutTest extends ShopTestCase {
 		$this->assertSame(['/api/v1', '/api/v1/orders', '/api/v1', '/api/v1/orders'], array_column(self::$monokulo->requests(), 'path'));
 	}
 
-	/** A Monokulo under a path: the order, the customer's checkout and the merchant's link all keep it. */
+	/** A Monokulo under a path: the order and the customer's checkout keep it. */
 	public function test_a_monokulo_under_a_path(): void {
 		$this->connect(prefix: '/monokulo');
 		self::$monokulo->serveEntry('/monokulo');
@@ -182,7 +181,6 @@ final class CheckoutTest extends ShopTestCase {
 
 		$this->assertSame(['redirect' => self::$monokulo->url . '/monokulo/checkout/ord_1'], $answer);
 		$this->assertCount(1, $this->orderRequests('/monokulo'));
-		$this->assertSame(self::$monokulo->url . '/monokulo/stores/' . FakeMonokulo::STORE_ID . '/orders/ord_1', $this->rows("SELECT `dashboard_url` FROM `" . DB_PREFIX . "monokulo_order`")[0]['dashboard_url']);
 	}
 
 	/** A customer on the shop's onion address pays on Monokulo's: the link in their order history is that one too. */
@@ -309,6 +307,8 @@ final class CheckoutTest extends ShopTestCase {
 	public static function failures(): array {
 		return [
 			'busy'          => [429, '{"type":"https://docs.monokulo.com/problems/rate-limited","detail":"slow down"}', 'Monero payments are busy right now. Please wait a moment and try again.', 'rate limited'],
+			'no rate'       => [503, '{"type":"https://docs.monokulo.com/problems/rates-unavailable","detail":"no exchange rate for EUR right now","retry_after":30}', 'The Monero price for this order can\'t be worked out right now. Please try again in a minute or two.', 'HTTP 503: no exchange rate for EUR right now (Monokulo has no exchange rate for this currency right now: its rate providers are down or rate limiting it. No order was made; the customer was asked to try again shortly, and trying again asks for the same order) Monokulo asked to wait 30 seconds before trying again.'],
+			'engine down'   => [503, '{"type":"https://docs.monokulo.com/problems/engine-unavailable","detail":"the payment engine is busy"}', 'Monero payments are busy right now. Please wait a moment and try again.', 'HTTP 503: the payment engine is busy (Monokulo\'s payment engine is busy or unreachable. No order was made'],
 			'key rejected'  => [401, '{"type":"https://docs.monokulo.com/problems/unauthorized","detail":"unknown key"}', 'Monero payments are not available for this store right now. Please contact the store owner.', 'connect the store again'],
 			'currency'      => [400, '{"type":"https://docs.monokulo.com/problems/invalid-amount","detail":"unsupported currency: EUR"}', 'Monero payments can\'t be taken in this order\'s currency right now. Please choose another currency or payment method.', 'HTTP 400: unsupported currency: EUR (Monokulo can\'t price this order'],
 			'anything else' => [500, 'oops', 'The Monero payment could not be started. Please try again, or contact the store.', 'HTTP 500: oops'],
@@ -340,6 +340,21 @@ final class CheckoutTest extends ShopTestCase {
 		['answer' => $answer] = $this->confirm($this->order());
 
 		$this->assertSame(['error' => 'The Monero payment service could not be reached. Please try again shortly.'], $answer);
+	}
+
+	/** No exchange rate right now: the customer tries again shortly, and the same request (same idempotency key) then makes the order. */
+	public function test_trying_again_after_no_exchange_rate_makes_the_same_order(): void {
+		$this->connect();
+		$this->monokuloAnswers(503, '{"type":"https://docs.monokulo.com/problems/rates-unavailable","detail":"no rate","retry_after":30}');
+		$orderId = $this->order();
+		$this->assertArrayHasKey('error', $this->confirm($orderId)['answer']);
+		$this->monokuloAnswers(201, FakeMonokulo::order('ord_1'));
+
+		$this->assertArrayHasKey('redirect', $this->confirm($orderId)['answer']);
+
+		$bodies = array_map(static fn(array $r): string => $r['body'], $this->orderRequests());
+		$this->assertCount(2, $bodies);
+		$this->assertSame($bodies[0], $bodies[1], 'the same request, idempotency key and all');
 	}
 
 	/** Trying again after a lost answer gets the same Monokulo order (same idempotency key). */

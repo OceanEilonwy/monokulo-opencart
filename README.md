@@ -100,14 +100,15 @@ statuses**; the defaults:
 | (Pay with Monero pressed) | The customer was sent to pay | **Order placed**: Pending | The payment link; the customer is told |
 | `order.unconfirmed`, `order.confirming` | A payment was seen; waiting for confirmations | **Payment seen**: Pending | Note |
 | `order.partial` | Less than the amount due arrived (underpaid) | **Part paid**: Pending | Note |
-| `order.paid` | Paid in full | **Paid**: Processing | The customer is told; note with a link to the order in Monokulo (its `mk:dashboard-order` page, kept when the order was made) |
+| `order.paid` | Paid in full | **Paid**: Processing | The customer is told; note with a link to the order in Monokulo (its `mk:dashboard-order` page, which every webhook carries) |
 | `order.overpaid` | Paid with more than was due | **Paid**: Processing | As paid, and a note that the excess isn't refunded automatically |
 | `order.expired` | The payment window closed without full payment | **Expired**: Expired | Note: any funds received stay at the address |
+| `order.cancelled` | Cancelled in Monokulo before it was paid (only Monokulo's POS cancels, its own orders, so a shop order shouldn't get this) | **Expired**: Expired | As expired |
 | `order.double_spend_detected` | A payment was double-spent and no longer counts | unchanged | Fraud alert note (the status change, if any, comes as its own event) |
 | `order.double_spend_reversed` | That alert was wrong | unchanged | Note |
 
 Notes are for the merchant; only "Order placed" and "Paid" are shown to the
-customer. A paid order never goes back: a later event (expired, part paid)
+customer. A paid order never goes back: a later event (expired, cancelled, part paid)
 only adds a note, and so does more money arriving (an overpayment, or a
 second payment request paid too), for you to refund. Paid means the
 **Paid** status, or one of OpenCart's complete statuses (Complete, Shipped
@@ -117,7 +118,7 @@ An order can have more than one payment request: when its total changed
 after the customer was first sent to pay, the shop asks Monokulo for a new
 one. The extension remembers them all. A payment on any of them marks the
 order paid (with a note to check the amount, if it was an earlier one);
-anything else about an earlier one (expired, part paid) is only a note,
+anything else about an earlier one (expired, cancelled, part paid) is only a note,
 since the newest one decides the status.
 
 ### Refunds
@@ -151,8 +152,8 @@ Connected stores keep working without connecting again: the extension adds
 what it now keeps to its tables (on install, or the first time it reads a
 connection from before). Until a store connects again it has no onion
 entry kept, which changes nothing for customers (each order carries its own
-onion checkout); orders made before the upgrade have no "In Monokulo" link
-in their later notes.
+onion checkout). The "In Monokulo" link in an order's notes comes with each
+webhook, so orders made before the upgrade have it too.
 
 ## Uninstall
 
