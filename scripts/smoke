@@ -36,6 +36,22 @@ if [ "$listening" != 7 ]; then
 	exit 1
 fi
 
+# The stand-in rate provider (docker/monokulo-smoke.toml) needs its port.
+rates=http://localhost:8096
+if curl -s -o /dev/null "$rates/"; then
+	echo "something already answers on $rates (the smoke Monokulo's stand-in rate provider): stop it, then run this again" >&2
+	exit 1
+fi
+
+compose() {
+	docker compose -f docker/compose.yaml "$@"
+}
+# In the OpenCart container, which is on this machine's network.
+compose exec -T -d opencart sh -c 'echo $$ > /tmp/smoke-rates.pid; exec php -S localhost:8096 /repo/tests/Support/fake-rates.php'
+unserve() {
+	compose exec -T opencart sh -c 'test -f /tmp/smoke-rates.pid && kill "$(cat /tmp/smoke-rates.pid)" && rm -f /tmp/smoke-rates.pid' 2>/dev/null || true
+}
+
 data=$(mktemp -d)
 key=$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')
 
@@ -57,6 +73,7 @@ fi
 cleanup() {
 	status=$?
 	stop
+	unserve
 	if [ "$status" != 0 ]; then
 		echo "--- Monokulo's log ---"
 		tail -n 100 "$data/monokulo.log" 2>/dev/null || true
@@ -65,6 +82,11 @@ cleanup() {
 	exit "$status"
 }
 trap cleanup EXIT INT TERM
+
+for i in $(seq 1 20); do
+	curl -s -o /dev/null "$rates/" && break
+	sleep 0.5
+done
 
 for i in $(seq 1 60); do
 	if curl -fs -o /dev/null "$url/status" || curl -s -o /dev/null -w '%{http_code}' "$url/" | grep -q 302; then

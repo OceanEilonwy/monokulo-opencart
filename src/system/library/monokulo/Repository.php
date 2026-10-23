@@ -101,10 +101,20 @@ final class Repository implements EntryStore {
 	];
 
 	/**
-	 * Adds the columns ADDED to tables an earlier version made, so its
-	 * connections and orders keep working without connecting again. Safe
-	 * to run again; run on install and whenever an old row turns up (the
-	 * files may have been replaced without reinstalling).
+	 * Columns an earlier version made that nothing uses any more: each
+	 * order's `dashboard_url` (its page on the merchant's dashboard, which
+	 * every webhook now links).
+	 */
+	private const DROPPED = [
+		'monokulo_order' => ['dashboard_url'],
+	];
+
+	/**
+	 * Adds the columns ADDED to tables an earlier version made, and drops
+	 * the DROPPED ones, so its connections and orders keep working without
+	 * connecting again. Safe to run again; run on install and whenever an
+	 * old row turns up (the files may have been replaced without
+	 * reinstalling).
 	 */
 	public function upgrade(): void {
 		foreach (self::ADDED as $name => $columns) {
@@ -112,6 +122,14 @@ final class Repository implements EntryStore {
 			foreach ($columns as $column => $definition) {
 				if (!$this->db->query("SHOW COLUMNS FROM {$table} LIKE '{$column}'")->num_rows) {
 					$this->db->query("ALTER TABLE {$table} ADD `{$column}` {$definition}");
+				}
+			}
+		}
+		foreach (self::DROPPED as $name => $columns) {
+			$table = "`{$this->prefix}{$name}`";
+			foreach ($columns as $column) {
+				if ($this->db->query("SHOW COLUMNS FROM {$table} LIKE '{$column}'")->num_rows) {
+					$this->db->query("ALTER TABLE {$table} DROP COLUMN `{$column}`");
 				}
 			}
 		}
@@ -219,6 +237,9 @@ final class Repository implements EntryStore {
 		$row = $this->db->query("SELECT * FROM `{$this->prefix}monokulo_order` WHERE `monokulo_order_id` = '" . $this->db->escape($monokuloOrderId) . "'")->row;
 		if (!$row) {
 			return null;
+		}
+		if (array_key_exists('dashboard_url', $row)) {
+			$this->upgrade();
 		}
 		$newest = $this->db->query(
 			"SELECT `monokulo_order_id` FROM `{$this->prefix}monokulo_order` WHERE `order_id` = " . (int)$row['order_id']

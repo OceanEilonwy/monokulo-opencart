@@ -161,7 +161,9 @@ what it now keeps to its tables (on install, or the first time it reads a
 connection from before). Until a store connects again it has no onion
 entry kept, which changes nothing for customers (each order carries its own
 onion checkout). The "In Monokulo" link in an order's notes comes with each
-webhook, so orders made before the upgrade have it too.
+webhook, so orders made before the upgrade have it too; a pre-release
+build's per-order copy of that link (`dashboard_url`) is dropped the first
+time a webhook finds it.
 
 ## Uninstall
 
