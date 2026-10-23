@@ -35,7 +35,7 @@ final class Repository {
 		return [
 			"CREATE TABLE IF NOT EXISTS `{$p}monokulo_connection` (
 				`host` VARCHAR(255) NOT NULL,
-				`endpoint` VARCHAR(255) NOT NULL,
+				`api` VARCHAR(255) NOT NULL,
 				`public_key` VARCHAR(128) NOT NULL,
 				`secret_token` VARCHAR(255) NOT NULL,
 				`webhook_secret` VARCHAR(255) NOT NULL,
@@ -76,17 +76,42 @@ final class Repository {
 		foreach ($this->schema() as $statement) {
 			$this->db->query($statement);
 		}
+		$this->upgrade();
+	}
+
+	/**
+	 * Moves connections made before the API's entry was handed over
+	 * (version 0.1's `endpoint`, Monokulo's own address) onto the entry
+	 * there, `{endpoint}/api/v1`, so they keep working without connecting
+	 * again. Safe to run again; run on install and whenever an old row
+	 * turns up (the files may have been replaced without reinstalling).
+	 */
+	public function upgrade(): void {
+		$table = "`{$this->prefix}monokulo_connection`";
+		if (!$this->db->query("SHOW COLUMNS FROM {$table} LIKE 'endpoint'")->num_rows) {
+			return;
+		}
+		if (!$this->db->query("SHOW COLUMNS FROM {$table} LIKE 'api'")->num_rows) {
+			$this->db->query("ALTER TABLE {$table} ADD `api` VARCHAR(255) NOT NULL DEFAULT '' AFTER `host`");
+		}
+		$this->db->query("UPDATE {$table} SET `api` = CONCAT(TRIM(TRAILING '/' FROM `endpoint`), '/api/v1') WHERE `api` = ''");
+		$this->db->query("ALTER TABLE {$table} DROP COLUMN `endpoint`, ALTER `api` DROP DEFAULT");
 	}
 
 	public function connection(string $host): ?Connection {
-		$row = $this->db->query("SELECT * FROM `{$this->prefix}monokulo_connection` WHERE `host` = '" . $this->db->escape($host) . "'")->row;
+		$query = "SELECT * FROM `{$this->prefix}monokulo_connection` WHERE `host` = '" . $this->db->escape($host) . "'";
+		$row = $this->db->query($query)->row;
+		if ($row && !isset($row['api'])) {
+			$this->upgrade();
+			$row = $this->db->query($query)->row;
+		}
 		if (!$row) {
 			return null;
 		}
 
 		return new Connection(
 			$row['host'],
-			$row['endpoint'],
+			$row['api'],
 			$row['public_key'],
 			$row['secret_token'],
 			$row['webhook_secret'],
@@ -95,10 +120,11 @@ final class Repository {
 	}
 
 	public function saveConnection(Connection $c): void {
+		$this->upgrade();
 		$e = fn(string $v): string => "'" . $this->db->escape($v) . "'";
 		$this->db->query(
-			"REPLACE INTO `{$this->prefix}monokulo_connection` (`host`, `endpoint`, `public_key`, `secret_token`, `webhook_secret`, `connected_at`) VALUES ("
-			. implode(', ', [$e($c->host), $e($c->endpoint), $e($c->publicKey), $e($c->secretToken), $e($c->webhookSecret), (int)$c->connectedAt])
+			"REPLACE INTO `{$this->prefix}monokulo_connection` (`host`, `api`, `public_key`, `secret_token`, `webhook_secret`, `connected_at`) VALUES ("
+			. implode(', ', [$e($c->host), $e($c->api), $e($c->publicKey), $e($c->secretToken), $e($c->webhookSecret), (int)$c->connectedAt])
 			. ')'
 		);
 	}

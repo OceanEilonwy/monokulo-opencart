@@ -26,7 +26,7 @@ final class WebhookOverHttpTest extends TestCase {
 		Shop::exec("DELETE FROM oc_monokulo_connection");
 		Shop::exec("DELETE FROM oc_monokulo_order");
 		Shop::exec("DELETE FROM oc_monokulo_event");
-		Shop::exec("INSERT INTO oc_monokulo_connection SET host = 'localhost:8090', endpoint = 'https://pay.example.com', public_key = 'pk_test', secret_token = 'sk_test', webhook_secret = " . Shop::quote(Vectors::secret()) . ", connected_at = 1");
+		Shop::exec("INSERT INTO oc_monokulo_connection SET host = 'localhost:8090', api = 'https://pay.example.com/api/v1', public_key = 'pk_test', secret_token = 'sk_test', webhook_secret = " . Shop::quote(Vectors::secret()) . ", connected_at = 1");
 		Shop::exec("INSERT INTO oc_order SET store_id = 0, store_name = 'Your Store', store_url = 'http://localhost:8090/', customer_id = 0, customer_group_id = 1, firstname = 'Ada', lastname = 'Lovelace', email = 'ada@example.test', telephone = '1', payment_method = '{\"name\":\"Monero\",\"code\":\"monokulo.monokulo\"}', shipping_method = '', comment = '', custom_field = '[]', payment_custom_field = '[]', shipping_custom_field = '[]', total = 100, order_status_id = 1, language_id = 1, language_code = 'en-gb', currency_id = 2, currency_code = 'USD', currency_value = 1, ip = '127.0.0.1', date_added = NOW(), date_modified = NOW()");
 		$this->orderId = (int)Shop::db()->insert_id;
 		Shop::exec("INSERT INTO oc_monokulo_order SET monokulo_order_id = " . Shop::quote(Vectors::orderId()) . ", order_id = " . $this->orderId . ", store_id = 0, host = 'localhost:8090', amount = '100.00', currency = 'USD', created_at = 1");

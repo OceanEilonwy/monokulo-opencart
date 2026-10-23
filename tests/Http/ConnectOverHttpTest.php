@@ -39,7 +39,7 @@ final class ConnectOverHttpTest extends TestCase {
 		$this->assertSame('OpenCart', $query['name']);
 
 		// Monokulo sends the browser back to return_url with its token.
-		$this->monokulo->respond('POST', '/plugins/connect/opencart/finish', 200, ['public_key' => 'pk_http', 'secret_token' => 'sk_http', 'endpoint' => $this->monokulo->url, 'webhook_signing_secret' => 'whsec_http']);
+		$this->monokulo->respond('POST', '/plugins/connect/opencart/finish', 200, ['public_key' => 'pk_http', 'secret_token' => 'sk_http', 'api' => '/api/v1', 'webhook_signing_secret' => 'whsec_http']);
 		$back = $browser->get($query['return_url'] . '&token=tok_http&nonce=' . $query['nonce']);
 
 		$this->assertSame(302, $back->status);

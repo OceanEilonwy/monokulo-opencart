@@ -41,6 +41,12 @@ Connecting turns the extension on. Monokulo only sends the connect flow back
 to the shop over **https** (plain http only for `localhost` or a `.onion`
 address), so the shop's address must be https.
 
+Connecting gives the shop the store's keys and the address of Monokulo's
+[HTTP API](https://docs.monokulo.com/api/) (`/api/v1` on the Monokulo
+address). The shop's server makes each order there with the store's secret
+key, following the API's `create-order` form, and sends the customer to the
+order's checkout page (`/checkout/<order id>`).
+
 Each OpenCart store connects on its own: a Monokulo store is one web
 address. Stores that share an address share one connection. **Connect
 again** replaces a store's keys (Monokulo replaces its webhook too).
@@ -56,7 +62,9 @@ come back to it.
 
 The shop asks Monokulo for the order total in the customer's currency;
 Monokulo converts it to XMR at its own exchange rate. The currency must be
-one your Monokulo prices (or XMR itself).
+one your Monokulo prices (or XMR itself): otherwise the customer is asked
+to choose another currency or payment method, and the shop's log says why
+(Monokulo's own explanation of the problem).
 
 ## Order statuses
 
@@ -105,8 +113,15 @@ settings under *Webhooks*.
 
 The extension writes to OpenCart's `storage/logs/monokulo.log`, each line
 with the request's trace id, which matches Monokulo's own logs. **Send
-errors to Monokulo** also sends its warnings and errors to your Monokulo,
-when the store there accepts client logs.
+errors to Monokulo** also sends its warnings and errors to your Monokulo
+(`/api/v1/logs`), when the store there has client logs turned on.
+
+## Upgrading from 0.1
+
+Version 0.1 saved Monokulo's address with each connection. Later versions
+use Monokulo's API at `<that address>/api/v1`, and move the saved
+connections onto it the first time they read them: connected stores keep
+working without connecting again.
 
 ## Uninstall
 
@@ -140,7 +155,9 @@ Admin: `http://localhost:8090/admin/`, user `admin`, password
   flow's redirects, webhooks.
 - **smoke**: a fresh Monokulo (`docker/monokulo-smoke.toml`): sign up, add
   a watch-only wallet, connect, then a guest checkout lands on the Monokulo
-  checkout, whose status is pending. Nothing is paid.
+  checkout page, and the order, read back through the API, is pending.
+  Nothing is paid. It also checks the stand-in Monokulo the other suites
+  use against the real one's OpenAPI document.
 
 Webhook tests use Monokulo's published test vectors, vendored in
 `tests/vectors` and pinned to a monokulo commit (`tests/vectors/PIN`).

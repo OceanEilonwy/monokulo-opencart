@@ -33,4 +33,5 @@ $_['error_not_connected']        = 'Monero payments are not set up for this stor
 $_['error_busy']                 = 'Monero payments are busy right now. Please wait a moment and try again.';
 $_['error_unavailable']          = 'Monero payments are not available for this store right now. Please contact the store owner.';
 $_['error_generic']              = 'The Monero payment could not be started. Please try again, or contact the store.';
+$_['error_currency']             = 'Monero payments can\'t be taken in this order\'s currency right now. Please choose another currency or payment method.';
 $_['error_unreachable']          = 'The Monero payment service could not be reached. Please try again shortly.';

@@ -94,7 +94,7 @@ final class WebhookTest extends ShopTestCase {
 		$this->assertSame(['2', '1', 'Your Monero payment has arrived. Thank you!'], array_values($history[0]));
 		$this->assertSame('0', $history[1]['notify']);
 		$this->assertStringContainsString('Monokulo: paid in full.', $history[1]['comment']);
-		$this->assertStringContainsString(self::$monokulo->url . '/dashboard/stores/917701c2-15c7-4bcb-bbc8-72d9ab28e785/orders/' . Vectors::orderId(), $history[1]['comment']);
+		$this->assertStringContainsString(self::$monokulo->url . '/stores/917701c2-15c7-4bcb-bbc8-72d9ab28e785/orders/' . Vectors::orderId(), $history[1]['comment']);
 	}
 
 	public function test_paid_in_xmr_is_paid_too(): void {

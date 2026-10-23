@@ -1,7 +1,9 @@
 <?php
 namespace Monokulo\OpenCart\Tests\Smoke;
 
+use Monokulo\OpenCart\OrderRequest;
 use Monokulo\OpenCart\Tests\Support\Browser;
+use Monokulo\OpenCart\Tests\Support\FakeMonokulo;
 use Monokulo\OpenCart\Tests\Support\Page;
 use Monokulo\OpenCart\Tests\Support\Shop;
 use PHPUnit\Framework\TestCase;
@@ -16,7 +18,9 @@ use PHPUnit\Framework\TestCase;
  * 3. on Monokulo, sets up the store for the shop, picks the wallet, and
  *    goes back to OpenCart, which redeems the token: connected;
  * 4. a guest buys something with Monero: the shop creates the Monokulo
- *    order and sends them to its checkout, which loads and says pending.
+ *    order through the API and sends them to its checkout page, which
+ *    loads; the order, read back through the API with the store's key, is
+ *    pending.
  *
  * Nothing is paid. Monokulo's pages are filled in by their fields' names.
  */
@@ -48,10 +52,76 @@ final class MonokuloSmokeTest extends TestCase {
 		// The Monokulo checkout loads, and the new order is waiting for payment.
 		$page = $this->browser->get($checkout);
 		$this->assertSame(200, $page->status, $page->text());
-		$status = $this->browser->get($checkout . '/status');
-		$this->assertSame(200, $status->status);
-		$this->assertSame('pending', $status->json()['status']);
-		$this->assertSame(0, $status->json()['confirmations']);
+		$order = $this->readOrder(substr($checkout, strlen($this->monokulo . '/checkout/')));
+		$this->assertSame('pending', $order['status']);
+		$this->assertSame(0, $order['confirmations']);
+		$this->assertSame('/checkout/' . $order['order_id'], $order['_links']['mk:checkout']['href']);
+	}
+
+	/**
+	 * The stand-in Monokulo the other suites use answers as this one does:
+	 * checked against the OpenAPI document the entry links to
+	 * (`service-desc`), so a change in Monokulo's API shows here.
+	 */
+	public function test_the_stand_in_matches_monokulos_openapi(): void {
+		$entry = $this->browser->get($this->monokulo . '/api/v1')->json();
+		$openapi = $this->browser->get($this->monokulo . $entry['_links']['service-desc']['href'])->json();
+		$schemas = $openapi['components']['schemas'];
+		$schema = static function (array $ref) use ($schemas): array {
+			return $schemas[substr($ref['$ref'], strlen('#/components/schemas/'))];
+		};
+
+		// The order form takes every field the shop sends.
+		$create = $openapi['paths']['/api/v1/orders']['post'];
+		$this->assertSame('create-order', $create['x-hal-forms-template']);
+		$this->assertContains('sk', $create['x-monokulo-keys']);
+		$input = $schema($create['requestBody']['content']['application/json']['schema']);
+		$sent = OrderRequest::body(0, 1, 12.5, 'EUR', 2, ['Mug'], 'Order #1', ' + %d more');
+		$this->assertSame([], array_values(array_diff(array_keys($sent), array_keys($input['properties']))));
+
+		// The answer is an order with every field the stand-in's has, and its links.
+		$order = $schema($create['responses']['201']['content']['application/prs.hal-forms+json']['schema']);
+		$fixture = FakeMonokulo::order('order_1');
+		$this->assertSame([], array_values(array_diff($order['required'], array_keys($fixture))), 'the stand-in has every required field');
+		$this->assertSame([], array_values(array_diff(array_keys($fixture), array_keys($order['properties']))), 'and no field Monokulo lacks');
+		$this->assertSame([], array_values(array_diff(array_keys($fixture['_links']), array_keys($order['properties']['_links']['properties']))));
+
+		// The entry's links and form are Monokulo's.
+		$root = $schema($openapi['paths']['/api/v1']['get']['responses']['200']['content']['application/prs.hal-forms+json']['schema']);
+		$this->assertSame([], array_values(array_diff(array_keys(FakeMonokulo::entry()['_links']), array_keys($root['properties']['_links']['properties']))));
+		$form = $root['properties']['_templates']['additionalProperties'];
+		$this->assertSame([], array_values(array_diff($form['required'], array_keys(FakeMonokulo::entry()['_templates']['create-order']))), 'the stand-in\'s form has every required field');
+		$this->assertArrayHasKey('/api/v1/logs', $openapi['paths'], 'where the shop forwards its errors');
+	}
+
+	/**
+	 * The order `orderId` as the API has it for the shop's key: from the
+	 * entry to the store's orders, then the order's own `self` link.
+	 *
+	 * @return array<string, mixed>
+	 */
+	private function readOrder(string $orderId): array {
+		$entry = $this->apiGet($this->connection()['api']);
+		$orders = $this->apiGet($this->monokulo . $entry['_links']['mk:orders']['href']);
+		foreach ($orders['orders'] as $order) {
+			if ($order['order_id'] === $orderId) {
+				return $this->apiGet($this->monokulo . $order['_links']['self']['href']);
+			}
+		}
+		$this->fail('the store\'s orders have no ' . $orderId . ': ' . json_encode($orders));
+	}
+
+	/** @return array<string, mixed> */
+	private function apiGet(string $url): array {
+		$page = $this->browser->get($url, ['Authorization' => 'Bearer ' . $this->connection()['secret_token']]);
+		$this->assertSame(200, $page->status, $url . ': ' . $page->body);
+
+		return $page->json();
+	}
+
+	/** @return array<string, string> the shop's saved connection */
+	private function connection(): array {
+		return Shop::rows("SELECT * FROM oc_monokulo_connection WHERE host = 'localhost:8090'")[0];
 	}
 
 	/** A fresh Monokulo asks for its operator first; that account is the merchant's too. */
@@ -62,8 +132,8 @@ final class MonokuloSmokeTest extends TestCase {
 			$page = $this->browser->get($this->monokulo . '/admin/setup');
 			$done = $this->browser->submit($page, '/admin/setup', ['email' => $email, 'password' => self::PASSWORD, 'confirm_password' => self::PASSWORD]);
 		} else {
-			$page = $this->browser->get($this->monokulo . '/dashboard/signup');
-			$done = $this->browser->submit($page, '/dashboard/signup', ['email' => $email, 'password' => self::PASSWORD, 'confirm_password' => self::PASSWORD]);
+			$page = $this->browser->get($this->monokulo . '/signup');
+			$done = $this->browser->submit($page, '/signup', ['email' => $email, 'password' => self::PASSWORD, 'confirm_password' => self::PASSWORD]);
 		}
 		$this->assertContains($done->status, [302, 303], 'signed up: ' . $done->text());
 
@@ -107,7 +177,7 @@ final class MonokuloSmokeTest extends TestCase {
 		$admin = $this->browser->get((string)$return->location());
 		$this->assertStringContainsString('Your store is connected', $admin->text());
 		$connection = Shop::rows("SELECT * FROM oc_monokulo_connection WHERE host = 'localhost:8090'")[0];
-		$this->assertSame($this->monokulo, rtrim($connection['endpoint'], '/'));
+		$this->assertSame($this->monokulo . '/api/v1', $connection['api']);
 		$this->assertStringStartsWith('pk_', $connection['public_key']);
 		$this->assertNotSame('', $connection['webhook_secret']);
 	}
@@ -138,8 +208,7 @@ final class MonokuloSmokeTest extends TestCase {
 
 		$answer = $this->browser->get($shop . 'extension/monokulo/payment/monokulo.confirm&language=en-gb')->json();
 		$this->assertArrayHasKey('redirect', $answer, json_encode($answer));
-		$connection = Shop::rows("SELECT * FROM oc_monokulo_connection WHERE host = 'localhost:8090'")[0];
-		$this->assertStringStartsWith($this->monokulo . '/pay/' . $connection['public_key'] . '/orders/', $answer['redirect']);
+		$this->assertMatchesRegularExpression('#\A' . preg_quote($this->monokulo, '#') . '/checkout/order_[0-9a-f-]+\z#', $answer['redirect']);
 
 		$order = Shop::rows("SELECT o.order_id, o.order_status_id FROM oc_monokulo_order m JOIN oc_order o ON o.order_id = m.order_id ORDER BY m.seq DESC LIMIT 1")[0];
 		$this->assertSame('1', $order['order_status_id'], 'placed as Pending');

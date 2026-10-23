@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace Monokulo\OpenCart;
 
 /**
- * The body of `POST /pay/{pk}/orders` for one OpenCart order.
+ * The body of the API's `create-order` form for one OpenCart order.
  *
  * The amount is the order total in the currency the customer saw, and
  * Monokulo converts it to XMR at its own rate: the shop never converts.
