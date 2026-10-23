@@ -8,7 +8,8 @@ No spend key touches the shop or Monokulo.
 
 - OpenCart **4.1.0.4**, PHP **8.1** or newer (tested on 8.1, 8.4 and 8.5;
   OpenCart doesn't officially support 8.5 yet)
-- A Monokulo whose operator has set its public address
+- A store on [monokulo.com](https://monokulo.com/), or on your own Monokulo
+  (its operator must have set its public address)
 - GPL-3.0-or-later
 
 ## Install
@@ -25,8 +26,8 @@ No spend key touches the shop or Monokulo.
 
 On the extension's settings page:
 
-1. Enter your **Monokulo address**, as your browser opens it
-   (`https://pay.example.com`), and **Save**.
+1. Check the **Monokulo address**: `https://monokulo.com` (the default),
+   or your own Monokulo's address as your browser opens it. **Save**.
 2. Under **Stores**, press **Connect** next to your store.
 3. Sign in to Monokulo (or sign up) in the page that opens. Monokulo finds
    your store by the shop's web address:

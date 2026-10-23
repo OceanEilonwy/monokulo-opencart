@@ -173,7 +173,7 @@ final class SettingsTest extends ShopTestCase {
 		$this->admin(self::PAGE . '.install');
 
 		$this->assertSame([
-			'payment_monokulo_address'           => '',
+			'payment_monokulo_address'           => 'https://monokulo.com',
 			'payment_monokulo_expired_status_id' => '14',
 			'payment_monokulo_forward_errors'    => '0',
 			'payment_monokulo_geo_zone_id'       => '0',

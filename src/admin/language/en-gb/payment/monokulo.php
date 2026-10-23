@@ -22,7 +22,7 @@ $_['button_reconnect']          = 'Connect again';
 
 // Entry
 $_['entry_address']             = 'Monokulo address';
-$_['help_address']              = 'Your Monokulo\'s public address, as your browser opens it (https://pay.example.com).';
+$_['help_address']              = 'Where your Monokulo is, as your browser opens it: https://monokulo.com, or your own Monokulo\'s address.';
 $_['entry_pending_status']      = 'Order placed';
 $_['help_pending_status']       = 'When the customer is sent to pay. The payment link goes into the order history and confirmation email.';
 $_['entry_waiting_status']      = 'Payment seen';
@@ -41,7 +41,7 @@ $_['entry_sort_order']          = 'Sort order';
 
 // Error
 $_['error_permission']          = 'Warning: you do not have permission to change the Monokulo settings.';
-$_['error_address']             = 'Enter an http or https address, such as https://pay.example.com.';
+$_['error_address']             = 'Enter an http or https address, such as https://monokulo.com.';
 $_['error_status']              = 'Choose an order status.';
 $_['error_connect_address']     = 'Save your Monokulo address before connecting.';
 $_['error_connect_permission']  = 'You do not have permission to connect stores.';
