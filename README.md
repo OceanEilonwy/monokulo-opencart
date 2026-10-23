@@ -1,14 +1,14 @@
 # Monokulo for OpenCart
 
 Accept Monero in an OpenCart 4 shop through your own
-[Monokulo](https://monokulo.com/), the self-hosted, non-custodial Monero
+[Monokulo](https://docs.monokulo.com/), the self-hosted, non-custodial Monero
 payment processor. Monokulo only ever holds a view key: it watches the
 chain for payments to your wallet and tells the shop when an order is paid.
 No spend key touches the shop or Monokulo.
 
 - OpenCart **4.1.0.4**, PHP **8.1** or newer (tested on 8.1, 8.4 and 8.5;
   OpenCart doesn't officially support 8.5 yet)
-- A store on [monokulo.com](https://monokulo.com/), or on your own Monokulo
+- A store on [www.monokulo.com](https://www.monokulo.com/), or on your own Monokulo
   (its operator must have set its public address)
 - GPL-3.0-or-later
 
@@ -26,7 +26,7 @@ No spend key touches the shop or Monokulo.
 
 On the extension's settings page:
 
-1. Check the **Monokulo address**: `https://monokulo.com` (the default),
+1. Check the **Monokulo address**: `https://www.monokulo.com` (the default),
    or your own Monokulo's address as your browser opens it. **Save**.
 2. Under **Stores**, press **Connect** next to your store.
 3. Sign in to Monokulo (or sign up) in the page that opens. Monokulo finds
