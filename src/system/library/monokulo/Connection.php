@@ -8,8 +8,11 @@ namespace Monokulo\OpenCart;
  * Monokulo store is one host, so every OpenCart store on the same host shares
  * one connection.
  *
- * `api` is the API's entry as an absolute URL (`https://pay.example.com/api/v1`):
- * the client finds every other API address from there.
+ * `api` is the API's entry as an absolute URL (`https://pay.example.com/api/v1`,
+ * or `https://example.com/monokulo/api/v1` for a Monokulo under a path): the
+ * client finds every other API address from there. `onionApi` is the same
+ * entry on Monokulo's onion address, when it had one as the shop connected
+ * (`''` otherwise, and for shops that connected before it was kept).
  */
 final class Connection {
 	public function __construct(
@@ -19,19 +22,7 @@ final class Connection {
 		public readonly string $secretToken,
 		public readonly string $webhookSecret,
 		public readonly int $connectedAt,
+		public readonly string $onionApi = '',
 	) {
-	}
-
-	/**
-	 * Where the shop's warnings and errors go: `logs` under the entry (the
-	 * entry has no link to it).
-	 */
-	public function logsUrl(): string {
-		return rtrim($this->api, '/') . '/logs';
-	}
-
-	/** The order's page in the merchant's Monokulo. */
-	public function dashboardOrderUrl(string $storeId, string $orderId): string {
-		return Url::origin($this->api) . '/stores/' . rawurlencode($storeId) . '/orders/' . rawurlencode($orderId);
 	}
 }

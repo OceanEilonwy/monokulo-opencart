@@ -27,15 +27,9 @@ final class ConnectReturnTest extends ShopTestCase {
 		return $this->repository()->createNonce($storeId, $host, self::ADMIN, $now ?: time());
 	}
 
-	private function monokuloFinishes(int $status, mixed $body): void {
-		self::$monokulo->respond('POST', '/plugins/connect/opencart/finish', $status, $body);
-	}
-
-	private const CREDENTIALS = ['public_key' => 'pk_new', 'secret_token' => 'sk_new', 'api' => '/api/v1', 'webhook_signing_secret' => 'whsec_new'];
-
 	public function test_a_good_return_connects_the_store_and_turns_monero_on(): void {
 		$this->setting('payment_monokulo_status', '0');
-		$this->monokuloFinishes(200, self::CREDENTIALS);
+		self::$monokulo->finishes();
 
 		$answer = $this->comeBack(['token' => 'tok_1', 'nonce' => $this->nonce()]);
 
@@ -49,14 +43,35 @@ final class ConnectReturnTest extends ShopTestCase {
 		$this->assertSame('opencart/' . Plugin::VERSION, $request['headers']['monokulo-client']);
 
 		$connection = $this->repository()->connection(self::HOST);
-		$this->assertSame([self::$monokulo->url . '/api/v1', 'pk_new', 'sk_new', 'whsec_new'], [$connection->api, $connection->publicKey, $connection->secretToken, $connection->webhookSecret]);
+		$this->assertSame([self::$monokulo->url . '/api/v1', '', 'pk_new', 'sk_new', 'whsec_new'], [$connection->api, $connection->onionApi, $connection->publicKey, $connection->secretToken, $connection->webhookSecret]);
 		$this->assertSame('1', $this->rows("SELECT `value` FROM `" . DB_PREFIX . "setting` WHERE `store_id` = 0 AND `key` = 'payment_monokulo_status'")[0]['value']);
+	}
+
+	/** A Monokulo with an onion address gives its entry there too, and the shop keeps it. */
+	public function test_the_onion_entry_is_kept(): void {
+		self::$monokulo->finishes(onion: true);
+
+		$this->comeBack(['token' => 'tok_1', 'nonce' => $this->nonce()]);
+
+		$this->assertSame(FakeMonokulo::ONION . '/api/v1', $this->repository()->connection(self::HOST)->onionApi);
+	}
+
+	/** A Monokulo under a path: the handshake goes under it, and the entry kept keeps it. */
+	public function test_a_monokulo_under_a_path_keeps_its_path(): void {
+		$this->setting('payment_monokulo_address', self::$monokulo->url . '/monokulo');
+		self::$monokulo->finishes('/monokulo');
+
+		$answer = $this->comeBack(['token' => 'tok_1', 'nonce' => $this->nonce()]);
+
+		$this->assertSame(self::ADMIN . '&monokulo_connected=1', OpenCart::location($answer));
+		$this->assertSame('/monokulo/plugins/connect/opencart/finish', self::$monokulo->requests()[0]['path']);
+		$this->assertSame(self::$monokulo->url . '/monokulo/api/v1', $this->repository()->connection(self::HOST)->api);
 	}
 
 	/** Connecting again replaces the store's credentials (Monokulo replaced its webhook too). */
 	public function test_connecting_again_replaces_the_credentials(): void {
 		$this->connect();
-		$this->monokuloFinishes(200, self::CREDENTIALS);
+		self::$monokulo->finishes();
 
 		$this->comeBack(['token' => 'tok_1', 'nonce' => $this->nonce()]);
 
@@ -67,7 +82,7 @@ final class ConnectReturnTest extends ShopTestCase {
 	/** The second store's return lands on its own host and connects only it, with its own webhook address. */
 	public function test_a_second_store_connects_on_its_own_host(): void {
 		$storeId = $this->addSecondStore();
-		$this->monokuloFinishes(200, self::CREDENTIALS);
+		self::$monokulo->finishes();
 
 		$answer = $this->comeBack(['token' => 'tok_1', 'nonce' => $this->nonce(self::SECOND_HOST, $storeId)], self::SECOND_HOST);
 
@@ -78,7 +93,7 @@ final class ConnectReturnTest extends ShopTestCase {
 	}
 
 	public function test_a_nonce_works_once(): void {
-		$this->monokuloFinishes(200, self::CREDENTIALS);
+		self::$monokulo->finishes();
 		$nonce = $this->nonce();
 		$this->comeBack(['token' => 'tok_1', 'nonce' => $nonce]);
 		$this->db()->query("DELETE FROM `" . DB_PREFIX . "monokulo_connection`");
@@ -134,19 +149,38 @@ final class ConnectReturnTest extends ShopTestCase {
 
 	public static function finishFailures(): array {
 		return [
-			'no public address yet' => [503, ['error' => 'no public address'], 'unavailable'],
-			'token refused'         => [401, '', 'finish'],
-			'missing secret'        => [200, ['public_key' => 'pk', 'secret_token' => 'sk', 'api' => '/api/v1'], 'finish'],
+			'no public address yet' => [503, 'no-public-address', 'unavailable'],
+			'token refused'         => [401, 'invalid-connect-code', 'finish'],
+			'refused request'       => [400, 'invalid-request', 'finish'],
+			'rate limited'          => [429, 'rate-limited', 'busy'],
+			'proof of work asked'   => [429, 'challenge-required', 'busy'],
+			'failed after spending' => [500, 'internal', 'finish'],
 		];
 	}
 
+	/** Each of the handshake's problems tells the admin what to do. */
 	#[\PHPUnit\Framework\Attributes\DataProvider('finishFailures')]
-	public function test_when_monokulo_does_not_hand_over_the_keys_the_admin_is_told(int $status, mixed $body, string $error): void {
-		$this->monokuloFinishes($status, $body);
+	public function test_when_monokulo_does_not_hand_over_the_keys_the_admin_is_told(int $status, string $problem, string $error): void {
+		self::$monokulo->problem('POST', '/plugins/connect/opencart/finish', $status, $problem, 'because');
+		$log = DIR_LOGS . 'monokulo.log';
+		$before = is_file($log) ? (string)file_get_contents($log) : '';
 
 		$answer = $this->comeBack(['token' => 'tok_1', 'nonce' => $this->nonce()]);
 
 		$this->assertSame(self::ADMIN . '&monokulo_connect_error=' . $error, OpenCart::location($answer));
+		$this->assertNull($this->repository()->connection(self::HOST));
+		$this->assertStringContainsString('HTTP ' . $status . ': because', substr((string)file_get_contents($log), strlen($before)));
+	}
+
+	/** Without a webhook secret the shop could never trust a webhook: that's no connection. */
+	public function test_an_answer_without_every_credential_is_no_connection(): void {
+		$answer = FakeMonokulo::connected();
+		unset($answer['webhook_signing_secret']);
+		self::$monokulo->respond('POST', '/plugins/connect/opencart/finish', 200, $answer);
+
+		$answer = $this->comeBack(['token' => 'tok_1', 'nonce' => $this->nonce()]);
+
+		$this->assertSame(self::ADMIN . '&monokulo_connect_error=finish', OpenCart::location($answer));
 		$this->assertNull($this->repository()->connection(self::HOST));
 	}
 

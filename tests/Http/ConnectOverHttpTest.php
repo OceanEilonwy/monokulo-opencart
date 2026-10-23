@@ -39,13 +39,15 @@ final class ConnectOverHttpTest extends TestCase {
 		$this->assertSame('OpenCart', $query['name']);
 
 		// Monokulo sends the browser back to return_url with its token.
-		$this->monokulo->respond('POST', '/plugins/connect/opencart/finish', 200, ['public_key' => 'pk_http', 'secret_token' => 'sk_http', 'api' => '/api/v1', 'webhook_signing_secret' => 'whsec_http']);
+		$this->monokulo->finishes(onion: true);
 		$back = $browser->get($query['return_url'] . '&token=tok_http&nonce=' . $query['nonce']);
 
 		$this->assertSame(302, $back->status);
 		$this->assertSame(Shop::adminUrl('extension/monokulo/payment/monokulo', $token) . '&monokulo_connected=1', $back->location());
-		$this->assertSame('pk_http', Shop::rows("SELECT public_key FROM oc_monokulo_connection WHERE host = 'localhost:8090'")[0]['public_key']);
-		$this->assertStringContainsString('Your store is connected', $browser->get((string)$back->location())->text());
+		$this->assertSame('pk_new', Shop::rows("SELECT public_key FROM oc_monokulo_connection WHERE host = 'localhost:8090'")[0]['public_key']);
+		$admin = $browser->get((string)$back->location())->text();
+		$this->assertStringContainsString('Your store is connected', $admin);
+		$this->assertStringContainsString('On Tor at ' . FakeMonokulo::ONION, $admin);
 
 		// The same return again: the nonce is spent.
 		$again = $browser->get($query['return_url'] . '&token=tok_http&nonce=' . $query['nonce']);

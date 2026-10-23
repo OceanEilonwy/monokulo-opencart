@@ -24,11 +24,14 @@ final class WebhookTest extends ShopTestCase {
 		parent::setUp();
 		$this->connect();
 		$this->orderId = $this->order(100.0, 'USD');
-		// As confirm leaves it: placed, mapped to the Monokulo order the vectors are about.
-		$this->repository()->recordOrder(Vectors::orderId(), $this->orderId, 0, self::HOST, '100.00', 'USD', 1760000000);
+		// As confirm leaves it: placed, mapped to the Monokulo order the vectors are about, with its dashboard page.
+		$this->repository()->recordOrder(Vectors::orderId(), $this->orderId, 0, self::HOST, '100.00', 'USD', self::DASHBOARD . Vectors::orderId(), 1760000000);
 		$this->registry()->get('load')->model('checkout/order');
 		$this->registry()->get('model_checkout_order')->addHistory($this->orderId, 1, 'placed');
 	}
+
+	/** Where the stand-in's orders are on the merchant's dashboard (an order's `mk:dashboard-order`), less the order's id. */
+	private const DASHBOARD = 'https://pay.example.com/monokulo/stores/st_1/orders/';
 
 	private ?\Opencart\System\Engine\Registry $registry = null;
 
@@ -94,7 +97,16 @@ final class WebhookTest extends ShopTestCase {
 		$this->assertSame(['2', '1', 'Your Monero payment has arrived. Thank you!'], array_values($history[0]));
 		$this->assertSame('0', $history[1]['notify']);
 		$this->assertStringContainsString('Monokulo: paid in full.', $history[1]['comment']);
-		$this->assertStringContainsString(self::$monokulo->url . '/stores/917701c2-15c7-4bcb-bbc8-72d9ab28e785/orders/' . Vectors::orderId(), $history[1]['comment']);
+		$this->assertStringEndsWith(' In Monokulo: ' . self::DASHBOARD . Vectors::orderId(), $history[1]['comment']);
+	}
+
+	/** An order made before the extension kept its dashboard page: the note goes without the link. */
+	public function test_an_order_without_a_dashboard_page_gets_its_note_without_a_link(): void {
+		$this->db()->query("UPDATE `" . DB_PREFIX . "monokulo_order` SET `dashboard_url` = ''");
+
+		$this->assertSame(200, $this->deliverVector('order.paid'));
+
+		$this->assertSame('Monokulo: paid in full.', array_slice($this->history($this->orderId), -1)[0]['comment']);
 	}
 
 	public function test_paid_in_xmr_is_paid_too(): void {
@@ -234,7 +246,7 @@ final class WebhookTest extends ShopTestCase {
 	 * has a newer Monokulo order, and the vectors' one is an earlier one.
 	 */
 	private function sentToPayAgain(): void {
-		$this->repository()->recordOrder('ord_newer', $this->orderId, 0, self::HOST, '120.00', 'USD', 1760000001);
+		$this->repository()->recordOrder('ord_newer', $this->orderId, 0, self::HOST, '120.00', 'USD', self::DASHBOARD . 'ord_newer', 1760000001);
 	}
 
 	/** Every Monokulo order the shop order had is known: an earlier one's webhook is taken, not refused. */

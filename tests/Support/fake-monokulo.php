@@ -5,7 +5,8 @@
  * its state: `responses.json` says what to answer ("POST /path" →
  * {status, body}), and every request it gets is appended to
  * `requests.jsonl` for the test to read back. An answer's `headers` replace
- * the default `Content-Type: application/json`.
+ * the default `Content-Type: application/json`; one with an `ETag` answers
+ * `304 Not Modified` to a request whose `If-None-Match` is that tag.
  */
 $dir = getenv('FAKE_MONOKULO_DIR');
 $path = (string)parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
@@ -30,14 +31,24 @@ file_put_contents($dir . '/requests.jsonl', json_encode([
 ]) . "\n", FILE_APPEND | LOCK_EX);
 
 $responses = is_file($dir . '/responses.json') ? json_decode((string)file_get_contents($dir . '/responses.json'), true) : [];
-$response = $responses[$key] ?? ['status' => 404, 'body' => '{"error":"not found"}'];
+$response = $responses[$key] ?? ['status' => 404, 'body' => ['type' => 'https://docs.monokulo.com/problems/not-found', 'title' => 'Not found', 'status' => 404], 'headers' => ['Content-Type' => 'application/problem+json']];
 
 if (!empty($response['delay'])) {
 	sleep((int)$response['delay']);
 }
 
+$answer = $response['headers'] ?? ['Content-Type' => 'application/json'];
+// An answer with an ETag is a 304 with no body to a request that has it, as Monokulo's entry is.
+if (isset($answer['ETag'], $headers['if-none-match']) && $headers['if-none-match'] === $answer['ETag']) {
+	http_response_code(304);
+	header('ETag: ' . $answer['ETag']);
+	header('Cache-Control: ' . ($answer['Cache-Control'] ?? 'no-store'));
+
+	return;
+}
+
 http_response_code((int)$response['status']);
-foreach ($response['headers'] ?? ['Content-Type' => 'application/json'] as $name => $value) {
+foreach ($answer as $name => $value) {
 	header($name . ': ' . $value);
 }
 echo is_string($response['body']) ? $response['body'] : json_encode($response['body']);

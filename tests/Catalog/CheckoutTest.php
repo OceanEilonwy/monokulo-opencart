@@ -26,8 +26,8 @@ final class CheckoutTest extends ShopTestCase {
 	 *
 	 * @return array{answer: array<string, mixed>, registry: \Opencart\System\Engine\Registry}
 	 */
-	private function confirm(int $orderId, string $paymentCode = 'monokulo.monokulo'): array {
-		$registry = OpenCart::boot('catalog', ['route' => self::CONFIRM], [], [], [
+	private function confirm(int $orderId, string $paymentCode = 'monokulo.monokulo', string $host = self::HOST): array {
+		$registry = OpenCart::boot('catalog', ['route' => self::CONFIRM], [], ['HTTP_HOST' => $host], [
 			'order_id'       => $orderId,
 			'payment_method' => ['name' => 'Monero (via Monokulo)', 'code' => $paymentCode],
 			'comment'        => 'leave at the door',
@@ -38,6 +38,9 @@ final class CheckoutTest extends ShopTestCase {
 		return ['answer' => json_decode($answer['output'], true), 'registry' => $registry];
 	}
 
+	/** A customer browsing the shop on its onion address. */
+	private const ONION_HOST = 'shopxyzshopxyzshopxyzshopxyzshopxyzshopxyzshopxyzshopxyz.onion';
+
 	/** Monokulo's answer to the order: the entry with its form, then `status` and `body` from the form's target. */
 	private function monokuloAnswers(int $status, mixed $body): void {
 		self::$monokulo->serveEntry();
@@ -45,8 +48,17 @@ final class CheckoutTest extends ShopTestCase {
 	}
 
 	/** The order requests Monokulo got (not the entry's). @return list<array<string, mixed>> */
-	private function orderRequests(): array {
-		return array_values(array_filter(self::$monokulo->requests(), static fn(array $r): bool => $r['path'] === '/api/v1/orders'));
+	private function orderRequests(string $prefix = ''): array {
+		return array_values(array_filter(self::$monokulo->requests(), static fn(array $r): bool => $r['path'] === $prefix . '/api/v1/orders'));
+	}
+
+	/** What the extension wrote to its log during `run`. */
+	private function logged(callable $run): string {
+		$log = DIR_LOGS . 'monokulo.log';
+		$before = is_file($log) ? (string)file_get_contents($log) : '';
+		$run();
+
+		return substr((string)file_get_contents($log), strlen($before));
 	}
 
 	public function test_monero_is_offered_once_the_store_is_connected(): void {
@@ -119,7 +131,15 @@ final class CheckoutTest extends ShopTestCase {
 		$this->assertSame('1', $history[0]['notify'], 'the customer gets the link');
 		$this->assertSame('Pay for this order with Monero here: ' . $checkout, $history[0]['comment']);
 
-		$this->assertSame([['monokulo_order_id' => 'ord_42', 'order_id' => (string)$orderId, 'store_id' => '0', 'host' => self::HOST, 'amount' => '89.02', 'currency' => 'EUR']], $this->rows("SELECT `monokulo_order_id`, `order_id`, `store_id`, `host`, `amount`, `currency` FROM `" . DB_PREFIX . "monokulo_order`"));
+		$this->assertSame([[
+			'monokulo_order_id' => 'ord_42',
+			'order_id'          => (string)$orderId,
+			'store_id'          => '0',
+			'host'              => self::HOST,
+			'amount'            => '89.02',
+			'currency'          => 'EUR',
+			'dashboard_url'     => self::$monokulo->url . '/stores/' . FakeMonokulo::STORE_ID . '/orders/ord_42',
+		]], $this->rows("SELECT `monokulo_order_id`, `order_id`, `store_id`, `host`, `amount`, `currency`, `dashboard_url` FROM `" . DB_PREFIX . "monokulo_order`"));
 
 		$session = $registry->get('session')->data;
 		foreach (['order_id', 'payment_method', 'comment'] as $key) {
@@ -127,9 +147,87 @@ final class CheckoutTest extends ShopTestCase {
 		}
 	}
 
+	/** The API's entry is kept: after the first order, each order is one request. */
+	public function test_the_entry_is_kept_between_orders(): void {
+		$this->connect();
+		$this->monokuloAnswers(201, FakeMonokulo::order('ord_1'));
+
+		$this->confirm($this->order());
+		$this->confirm($this->order());
+
+		$this->assertSame(['/api/v1', '/api/v1/orders', '/api/v1/orders'], array_column(self::$monokulo->requests(), 'path'));
+		$this->assertSame(FakeMonokulo::ENTRY_ETAG, $this->rows("SELECT `entry_etag` FROM `" . DB_PREFIX . "monokulo_connection`")[0]['entry_etag']);
+	}
+
+	/** Connecting again forgets the entry the old key was shown. */
+	public function test_connecting_again_reads_the_entry_afresh(): void {
+		$this->connect();
+		$this->monokuloAnswers(201, FakeMonokulo::order('ord_1'));
+		$this->confirm($this->order());
+
+		$this->connect();
+		$this->confirm($this->order());
+
+		$this->assertSame(['/api/v1', '/api/v1/orders', '/api/v1', '/api/v1/orders'], array_column(self::$monokulo->requests(), 'path'));
+	}
+
+	/** A Monokulo under a path: the order, the customer's checkout and the merchant's link all keep it. */
+	public function test_a_monokulo_under_a_path(): void {
+		$this->connect(prefix: '/monokulo');
+		self::$monokulo->serveEntry('/monokulo');
+		self::$monokulo->createsOrder('ord_1', '/monokulo');
+		$orderId = $this->order();
+
+		$answer = $this->confirm($orderId)['answer'];
+
+		$this->assertSame(['redirect' => self::$monokulo->url . '/monokulo/checkout/ord_1'], $answer);
+		$this->assertCount(1, $this->orderRequests('/monokulo'));
+		$this->assertSame(self::$monokulo->url . '/monokulo/stores/' . FakeMonokulo::STORE_ID . '/orders/ord_1', $this->rows("SELECT `dashboard_url` FROM `" . DB_PREFIX . "monokulo_order`")[0]['dashboard_url']);
+	}
+
+	/** A customer on the shop's onion address pays on Monokulo's: the link in their order history is that one too. */
+	public function test_a_customer_on_tor_is_sent_to_the_onion_checkout(): void {
+		$this->connect();
+		self::$monokulo->serveEntry(onion: true);
+		self::$monokulo->createsOrder('ord_1', onion: true);
+		$orderId = $this->order();
+
+		$answer = $this->confirm($orderId, host: self::ONION_HOST)['answer'];
+
+		$this->assertSame(['redirect' => FakeMonokulo::ONION . '/checkout/ord_1'], $answer);
+		$this->assertSame('Pay for this order with Monero here: ' . FakeMonokulo::ONION . '/checkout/ord_1', $this->history($orderId)[0]['comment']);
+	}
+
+	/** The same order for a customer on the web: the web checkout. */
+	public function test_a_customer_on_the_web_is_sent_to_the_web_checkout_when_there_is_an_onion_one(): void {
+		$this->connect();
+		self::$monokulo->serveEntry(onion: true);
+		self::$monokulo->createsOrder('ord_1', onion: true);
+
+		$this->assertSame(['redirect' => self::$monokulo->url . '/checkout/ord_1'], $this->confirm($this->order())['answer']);
+	}
+
+	/** Without an onion address at Monokulo a Tor customer is never sent to the web: they're told, the merchant's log says why, the order is untouched. */
+	public function test_a_customer_on_tor_is_not_sent_to_the_web_when_monokulo_has_no_onion_address(): void {
+		$this->connect();
+		$this->monokuloAnswers(201, FakeMonokulo::order('ord_1'));
+		$orderId = $this->order();
+
+		$logged = $this->logged(function () use ($orderId, &$result): void {
+			$result = $this->confirm($orderId, host: self::ONION_HOST);
+		});
+
+		$this->assertSame(['error' => 'Monero can\'t be paid over Tor at this shop right now. Please contact the store owner.'], $result['answer']);
+		$this->assertSame(0, $this->orderStatus($orderId));
+		$this->assertSame([], $this->history($orderId));
+		$this->assertSame([], $this->rows("SELECT * FROM `" . DB_PREFIX . "monokulo_order`"));
+		$this->assertSame($orderId, $result['registry']->get('session')->data['order_id'], 'the cart is kept');
+		$this->assertStringContainsString('has no onion checkout (mk:onion-checkout)', $logged);
+	}
+
 	/**
 	 * The amount goes in the currency's own decimal places, without
-	 * trailing zeros: never padded, which Monokulo may refuse.
+	 * trailing zeros.
 	 */
 	public function test_the_amount_has_the_currencys_places_and_no_trailing_zeros(): void {
 		$this->connect();
@@ -234,12 +332,12 @@ final class CheckoutTest extends ShopTestCase {
 
 		$this->confirm($this->order());
 		$requests = self::$monokulo->requests();
-		$this->assertSame(['/api/v1', '/api/v1/orders', '/api/v1/logs'], array_column($requests, 'path'));
-		$this->assertSame('Bearer sk_test', $requests[2]['headers']['authorization']);
-		$entries = json_decode($requests[2]['body'], true)['entries'];
+		$this->assertSame(['/api/v1/orders', '/api/v1/logs'], array_column($requests, 'path'), 'with the entry kept, its send-logs form');
+		$this->assertSame('Bearer sk_test', $requests[1]['headers']['authorization']);
+		$entries = json_decode($requests[1]['body'], true)['entries'];
 		$this->assertSame('error', $entries[0]['level']);
 		$this->assertStringContainsString('HTTP 429: slow down', $entries[0]['message']);
-		$this->assertSame(substr($requests[1]['headers']['traceparent'], 3, 32), $entries[0]['trace_id'], 'the same trace as the failed call');
+		$this->assertSame(substr($requests[0]['headers']['traceparent'], 3, 32), $entries[0]['trace_id'], 'the same trace as the failed call');
 	}
 
 	public function test_the_button_calls_confirm(): void {

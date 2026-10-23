@@ -5,8 +5,10 @@ namespace Monokulo\OpenCart;
 
 /**
  * Links in Monokulo's answers are paths on its own host (`/api/v1/orders`,
- * `/checkout/order_…`). They are resolved against the URL the shop called,
- * so a shop that reaches Monokulo at one address stays on it.
+ * `/checkout/order_…`, with the path of a Monokulo served under one), or
+ * absolute URLs for its onion address. They are resolved against the URL
+ * the shop called, so a shop that reaches Monokulo at one address stays
+ * on it.
  */
 final class Url {
 	/**
@@ -40,5 +42,10 @@ final class Url {
 		}
 
 		return strtolower($parts['scheme']) . '://' . $parts['host'] . (isset($parts['port']) ? ':' . $parts['port'] : '');
+	}
+
+	/** Whether `host` (`abc….onion`, with or without a port) is an onion address. */
+	public static function isOnion(string $host): bool {
+		return (bool)preg_match('/\.onion\.?(:\d+)?\z/i', trim($host));
 	}
 }

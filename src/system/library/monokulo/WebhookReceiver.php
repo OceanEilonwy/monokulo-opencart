@@ -53,7 +53,7 @@ final class WebhookReceiver {
 			return 200;
 		}
 		try {
-			$this->updater->apply($order['order_id'], $decision, $event, $order['latest'], $connection);
+			$this->updater->apply($order['order_id'], $decision, $event, $order['latest'], $order['dashboard_url']);
 		} catch (\Throwable $e) {
 			$this->repository->releaseEvent($event->eventId);
 			$this->log->error(sprintf('Webhook %s for order %d could not be applied: %s', $event->eventId, $order['order_id'], $e->getMessage()));

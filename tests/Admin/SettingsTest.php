@@ -1,6 +1,8 @@
 <?php
 namespace Monokulo\OpenCart\Tests\Admin;
 
+use Monokulo\OpenCart\Connection;
+use Monokulo\OpenCart\Tests\Support\FakeMonokulo;
 use Monokulo\OpenCart\Tests\Support\OpenCart;
 use Monokulo\OpenCart\Tests\Support\ShopTestCase;
 
@@ -57,6 +59,16 @@ final class SettingsTest extends ShopTestCase {
 		$this->assertMatchesRegularExpression('/name="payment_monokulo_expired_status_id".*?<option value="14" selected/s', $html);
 	}
 
+	/** A store connected to a Monokulo with an onion address says where Tor customers pay; one without says nothing of Tor. */
+	public function test_the_page_shows_the_onion_address_a_store_connected_with(): void {
+		$this->connect(self::HOST);
+		$this->assertStringNotContainsString('On Tor at', $this->admin(self::PAGE)['output']);
+
+		$this->repository()->saveConnection(new Connection(self::HOST, self::$monokulo->url . '/api/v1', 'pk_test', 'sk_test', 'wh', 1, FakeMonokulo::ONION . '/api/v1'));
+
+		$this->assertStringContainsString('On Tor at ' . FakeMonokulo::ONION . ': customers on the shop\'s onion address pay there.', $this->admin(self::PAGE)['output']);
+	}
+
 	public function test_no_connect_button_before_there_is_an_address(): void {
 		$this->setting('payment_monokulo_address', '');
 
@@ -69,6 +81,7 @@ final class SettingsTest extends ShopTestCase {
 	public function test_the_page_says_how_connecting_went(): void {
 		$this->assertStringContainsString('Your store is connected. Monero is now offered at checkout.', $this->admin(self::PAGE, ['monokulo_connected' => '1'])['output']);
 		$this->assertStringContainsString('has not set its public address', $this->admin(self::PAGE, ['monokulo_connect_error' => 'unavailable'])['output']);
+		$this->assertStringContainsString('Your Monokulo is busy: wait a minute, then connect again.', $this->admin(self::PAGE, ['monokulo_connect_error' => 'busy'])['output']);
 		$this->assertStringNotContainsString('monokulo-connect-error', $this->admin(self::PAGE, ['monokulo_connect_error' => '<script>'])['output']);
 	}
 
