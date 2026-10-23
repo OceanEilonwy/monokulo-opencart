@@ -24,7 +24,11 @@ use PHPUnit\Framework\TestCase;
  * 5. a guest on the shop's onion address buys too, and is sent to the
  *    order's checkout on Monokulo's onion address (the smoke Monokulo has
  *    one, docker/monokulo-smoke.toml), with the entry kept from the first
- *    order.
+ *    order;
+ * 6. a guest buys in EUR, for which Monokulo has no rate (the stand-in rate
+ *    provider, tests/Support/fake-rates.php, rate limits it): no order is
+ *    made, the customer is asked to try again shortly, and the shop's log
+ *    says why and how long Monokulo asked to wait.
  *
  * Nothing is paid. Monokulo's pages are filled in by their fields' names.
  * Along the way, what the real Monokulo answers is compared with what the
@@ -89,6 +93,18 @@ final class MonokuloSmokeTest extends TestCase {
 		$this->assertSame($onion, $order['_links']['mk:onion-checkout']['href']);
 		$history = Shop::rows("SELECT h.comment FROM oc_monokulo_order m JOIN oc_order_history h ON h.order_id = m.order_id WHERE m.monokulo_order_id = " . Shop::quote($order['order_id']));
 		$this->assertSame('Pay for this order with Monero here: ' . $onion, $history[0]['comment'], 'their link in the confirmation is the onion one');
+
+		// In EUR, for which Monokulo has no rate right now: no order, the customer asked to try again shortly, the merchant told why.
+		$this->assertArrayHasKey('redirect', $this->browser->post(Shop::URL . 'index.php?route=common/currency.save&language=en-gb', ['code' => 'EUR', 'redirect' => Shop::URL])->json(), 'the shop now prices in EUR');
+		$orders = Shop::rows("SELECT COUNT(*) AS n FROM oc_monokulo_order")[0]['n'];
+		$logged = Shop::log();
+		$answer = $this->confirmWithMonero();
+		$this->assertSame(['error' => 'The Monero price for this order can\'t be worked out right now. Please try again in a minute or two.'], $answer);
+		$this->assertSame($orders, Shop::rows("SELECT COUNT(*) AS n FROM oc_monokulo_order")[0]['n'], 'no Monokulo order made');
+		$log = substr(Shop::log(), strlen($logged));
+		$this->assertStringContainsString('HTTP 503', $log);
+		$this->assertStringContainsString('Monokulo has no exchange rate for this currency right now', $log);
+		$this->assertStringContainsString('Monokulo asked to wait 30 seconds before trying again.', $log);
 	}
 
 	/**
@@ -339,6 +355,26 @@ final class MonokuloSmokeTest extends TestCase {
 	 * hand); returns the Monokulo checkout it was sent to.
 	 */
 	private function buyWithMonero(string $host = ''): string {
+		$answer = $this->confirmWithMonero($host);
+		$this->assertArrayHasKey('redirect', $answer, json_encode($answer));
+		if ($host === '') {
+			$this->assertMatchesRegularExpression('#\A' . preg_quote($this->monokulo, '#') . '/checkout/order_[0-9a-f-]+\z#', $answer['redirect']);
+		}
+
+		$order = Shop::rows("SELECT o.order_id, o.order_status_id FROM oc_monokulo_order m JOIN oc_order o ON o.order_id = m.order_id ORDER BY m.seq DESC LIMIT 1")[0];
+		$this->assertSame('1', $order['order_status_id'], 'placed as Pending');
+
+		return $answer['redirect'];
+	}
+
+	/**
+	 * A guest puts the product in the cart, checks out with Monero and
+	 * presses Pay with Monero (on the shop's address `host`, if given):
+	 * what the shop answers (`redirect`, or `error`).
+	 *
+	 * @return array<string, string>
+	 */
+	private function confirmWithMonero(string $host = ''): array {
 		$shop = Shop::URL . 'index.php?route=';
 		$this->ok($this->browser->post($shop . 'checkout/cart.add&language=en-gb', ['product_id' => self::PRODUCT, 'quantity' => '1']));
 
@@ -361,16 +397,7 @@ final class MonokuloSmokeTest extends TestCase {
 		$confirmStep = $this->browser->get($shop . 'checkout/confirm.confirm&language=en-gb');
 		$this->assertStringContainsString('Pay with Monero', $confirmStep->body);
 
-		$answer = $this->browser->get($shop . 'extension/monokulo/payment/monokulo.confirm&language=en-gb', $host !== '' ? ['Host' => $host, 'Cookie' => 'OCSESSID=' . $this->browser->cookie('OCSESSID')] : [])->json();
-		$this->assertArrayHasKey('redirect', $answer, json_encode($answer));
-		if ($host === '') {
-			$this->assertMatchesRegularExpression('#\A' . preg_quote($this->monokulo, '#') . '/checkout/order_[0-9a-f-]+\z#', $answer['redirect']);
-		}
-
-		$order = Shop::rows("SELECT o.order_id, o.order_status_id FROM oc_monokulo_order m JOIN oc_order o ON o.order_id = m.order_id ORDER BY m.seq DESC LIMIT 1")[0];
-		$this->assertSame('1', $order['order_status_id'], 'placed as Pending');
-
-		return $answer['redirect'];
+		return $this->browser->get($shop . 'extension/monokulo/payment/monokulo.confirm&language=en-gb', $host !== '' ? ['Host' => $host, 'Cookie' => 'OCSESSID=' . $this->browser->cookie('OCSESSID')] : [])->json();
 	}
 
 	/** One checkout step that OpenCart answered with success. */

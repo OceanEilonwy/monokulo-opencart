@@ -7,12 +7,14 @@ use Monokulo\OpenCart\Tests\Support\Vectors;
 use PHPUnit\Framework\TestCase;
 
 /**
- * A shop that connected with the version before (its tables without
- * `onion_api` or the kept entry) keeps its connection and its orders once
- * the new files are in place, without connecting again or reinstalling:
- * the columns are added the first time a request finds an old row. It has
- * no onion entry until it connects again; its earlier orders' notes link
- * them in Monokulo all the same, since every webhook carries the link.
+ * A shop that connected with an earlier version keeps its connection and
+ * its orders once the new files are in place, without connecting again or
+ * reinstalling: the first API version's tables (without `onion_api` or the
+ * kept entry) gain those columns the first time a request finds an old
+ * connection, and a pre-release's orders lose their unused `dashboard_url`
+ * the first time a webhook finds one. It has no onion entry until it
+ * connects again; its earlier orders' notes link them in Monokulo all the
+ * same, since every webhook carries the link.
  */
 final class UpgradeOverHttpTest extends TestCase {
 	private int $orderId;
@@ -63,6 +65,13 @@ final class UpgradeOverHttpTest extends TestCase {
 		return array_column(Shop::rows("SHOW COLUMNS FROM " . $table), 'Field');
 	}
 
+	/** The tables as a pre-release made them: the connection up to date, and each order with its dashboard page. */
+	private function preRelease(): void {
+		Shop::exec("ALTER TABLE oc_monokulo_connection ADD `onion_api` VARCHAR(255) NOT NULL DEFAULT '' AFTER `api`, ADD `entry` MEDIUMTEXT NULL, ADD `entry_etag` VARCHAR(255) NOT NULL DEFAULT '', ADD `entry_expires_at` INT(11) NOT NULL DEFAULT 0");
+		Shop::exec("ALTER TABLE oc_monokulo_order ADD `dashboard_url` VARCHAR(1024) NOT NULL DEFAULT '' AFTER `currency`");
+		Shop::exec("UPDATE oc_monokulo_order SET dashboard_url = 'https://pay.example.com/monokulo/stores/s/orders/o'");
+	}
+
 	private function assertUpgraded(): void {
 		$this->assertSame(['host', 'api', 'onion_api', 'public_key', 'secret_token', 'webhook_secret', 'connected_at', 'entry', 'entry_etag', 'entry_expires_at'], $this->columns('oc_monokulo_connection'));
 		$this->assertSame(['seq', 'monokulo_order_id', 'order_id', 'store_id', 'host', 'amount', 'currency', 'created_at'], $this->columns('oc_monokulo_order'), 'nothing added to the orders');
@@ -87,15 +96,36 @@ final class UpgradeOverHttpTest extends TestCase {
 	/** A webhook for an order made before: applied, with the "In Monokulo" link the webhook carries. */
 	public function test_over_http_an_old_orders_webhook_is_applied(): void {
 		$delivery = Vectors::delivery('order.paid');
-		$t = time();
-		$headers = ['X-Monokulo-Signature' => 't=' . $t . ',v1=' . hash_hmac('sha256', $t . '.' . $delivery['body'], Vectors::secret()), 'Content-Type' => 'application/json'] + $delivery['headers'];
 
-		$status = (new Browser())->post(Shop::URL . 'index.php?route=extension/monokulo/payment/monokulo.callback', $delivery['body'], $headers)->status;
-
-		$this->assertSame(200, $status);
+		$this->assertSame(200, $this->deliverPaid());
 		$this->assertSame('2', Shop::rows("SELECT order_status_id FROM oc_order WHERE order_id = " . $this->orderId)[0]['order_status_id']);
 		$history = Shop::rows("SELECT comment FROM oc_order_history WHERE order_id = " . $this->orderId . " ORDER BY order_history_id");
 		$this->assertSame('Monokulo: paid in full. In Monokulo: ' . json_decode($delivery['body'], true)['_links']['mk:dashboard-order']['href'], end($history)['comment']);
 		$this->assertUpgraded();
+	}
+
+	/** A pre-release's orders lose their unused dashboard page the first time a webhook finds one, and the webhook is applied with the link it carries. */
+	public function test_over_http_a_pre_release_orders_dashboard_column_is_dropped(): void {
+		$this->preRelease();
+		$this->assertContains('dashboard_url', $this->columns('oc_monokulo_order'));
+
+		[$browser, $token] = Shop::admin();
+		$this->assertStringContainsString('pk_old', $browser->get(Shop::adminUrl('extension/monokulo/payment/monokulo', $token))->text());
+		$this->assertContains('dashboard_url', $this->columns('oc_monokulo_order'), 'reading an up-to-date connection changes nothing');
+
+		$this->assertSame(200, $this->deliverPaid());
+
+		$this->assertUpgraded();
+		$history = Shop::rows("SELECT comment FROM oc_order_history WHERE order_id = " . $this->orderId . " ORDER BY order_history_id");
+		$this->assertSame('Monokulo: paid in full. In Monokulo: ' . json_decode(Vectors::delivery('order.paid')['body'], true)['_links']['mk:dashboard-order']['href'], end($history)['comment']);
+	}
+
+	/** Monokulo's order.paid for the shop's old order, signed now, over HTTP; the status answered. */
+	private function deliverPaid(): int {
+		$delivery = Vectors::delivery('order.paid');
+		$t = time();
+		$headers = ['X-Monokulo-Signature' => 't=' . $t . ',v1=' . hash_hmac('sha256', $t . '.' . $delivery['body'], Vectors::secret()), 'Content-Type' => 'application/json'] + $delivery['headers'];
+
+		return (new Browser())->post(Shop::URL . 'index.php?route=extension/monokulo/payment/monokulo.callback', $delivery['body'], $headers)->status;
 	}
 }

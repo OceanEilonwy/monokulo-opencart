@@ -31,6 +31,13 @@ final class Shop {
 		self::db()->query($sql);
 	}
 
+	/** The extension's log so far (storage/logs/monokulo.log in the container the suites run in), or ''. */
+	public static function log(): string {
+		$file = '/var/www/html/system/storage/logs/monokulo.log';
+
+		return is_file($file) ? (string)file_get_contents($file) : '';
+	}
+
 	public static function quote(string $value): string {
 		return "'" . self::db()->real_escape_string($value) . "'";
 	}
