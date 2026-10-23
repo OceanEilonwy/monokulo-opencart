@@ -7,10 +7,12 @@ namespace Monokulo\OpenCart;
  * The extension's own tables, through OpenCart's database object (anything
  * with OpenCart's `query`, `escape` and `countAffected`).
  *
- * - `monokulo_connection`: one row per shop host that has connected.
- * - `monokulo_order`: each Monokulo order the shop created, and which
- *   OpenCart order it pays. An OpenCart order can have more than one when
- *   its total changed after a first attempt; the newest is the live one.
+ * - `monokulo_connection`: one row per shop host that has connected, with
+ *   the API's entry as last read for its key (see EntryStore).
+ * - `monokulo_order`: each Monokulo order the shop created, which
+ *   OpenCart order it pays, and its page on the merchant's dashboard. An
+ *   OpenCart order can have more than one when its total changed after a
+ *   first attempt; the newest is the live one.
  * - `monokulo_event`: webhook events already applied, so a delivery that is
  *   sent again (its answer was lost) changes nothing the second time.
  * - `monokulo_connect_nonce`: connect attempts the admin started, each
@@ -19,7 +21,7 @@ namespace Monokulo\OpenCart;
  * Uninstalling the extension keeps these tables: orders refer to them, and
  * installing again picks the connections back up.
  */
-final class Repository {
+final class Repository implements EntryStore {
 	public const NONCE_TTL_SECONDS = 600;
 
 	public function __construct(
@@ -36,10 +38,14 @@ final class Repository {
 			"CREATE TABLE IF NOT EXISTS `{$p}monokulo_connection` (
 				`host` VARCHAR(255) NOT NULL,
 				`api` VARCHAR(255) NOT NULL,
+				`onion_api` VARCHAR(255) NOT NULL DEFAULT '',
 				`public_key` VARCHAR(128) NOT NULL,
 				`secret_token` VARCHAR(255) NOT NULL,
 				`webhook_secret` VARCHAR(255) NOT NULL,
 				`connected_at` INT(11) NOT NULL,
+				`entry` MEDIUMTEXT NULL,
+				`entry_etag` VARCHAR(255) NOT NULL DEFAULT '',
+				`entry_expires_at` INT(11) NOT NULL DEFAULT 0,
 				PRIMARY KEY (`host`)
 			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci",
 			"CREATE TABLE IF NOT EXISTS `{$p}monokulo_order` (
@@ -50,6 +56,7 @@ final class Repository {
 				`host` VARCHAR(255) NOT NULL,
 				`amount` VARCHAR(40) NOT NULL,
 				`currency` VARCHAR(8) NOT NULL,
+				`dashboard_url` VARCHAR(1024) NOT NULL DEFAULT '',
 				`created_at` INT(11) NOT NULL,
 				PRIMARY KEY (`monokulo_order_id`),
 				UNIQUE KEY `seq` (`seq`),
@@ -80,28 +87,45 @@ final class Repository {
 	}
 
 	/**
-	 * Moves connections made before the API's entry was handed over
-	 * (version 0.1's `endpoint`, Monokulo's own address) onto the entry
-	 * there, `{endpoint}/api/v1`, so they keep working without connecting
-	 * again. Safe to run again; run on install and whenever an old row
-	 * turns up (the files may have been replaced without reinstalling).
+	 * Columns added since the extension's first API version made its
+	 * tables, and what they hold for what was there before: `onion_api`
+	 * is '' until the shop connects again, there is no kept entry until
+	 * the next order reads it, and orders made before have no dashboard
+	 * page (their notes go without an "In Monokulo" link).
+	 */
+	private const ADDED = [
+		'monokulo_connection' => [
+			'onion_api'        => "VARCHAR(255) NOT NULL DEFAULT '' AFTER `api`",
+			'entry'            => 'MEDIUMTEXT NULL',
+			'entry_etag'       => "VARCHAR(255) NOT NULL DEFAULT ''",
+			'entry_expires_at' => 'INT(11) NOT NULL DEFAULT 0',
+		],
+		'monokulo_order'      => [
+			'dashboard_url' => "VARCHAR(1024) NOT NULL DEFAULT '' AFTER `currency`",
+		],
+	];
+
+	/**
+	 * Adds the columns ADDED to tables an earlier version made, so its
+	 * connections and orders keep working without connecting again. Safe
+	 * to run again; run on install and whenever an old row turns up (the
+	 * files may have been replaced without reinstalling).
 	 */
 	public function upgrade(): void {
-		$table = "`{$this->prefix}monokulo_connection`";
-		if (!$this->db->query("SHOW COLUMNS FROM {$table} LIKE 'endpoint'")->num_rows) {
-			return;
+		foreach (self::ADDED as $name => $columns) {
+			$table = "`{$this->prefix}{$name}`";
+			foreach ($columns as $column => $definition) {
+				if (!$this->db->query("SHOW COLUMNS FROM {$table} LIKE '{$column}'")->num_rows) {
+					$this->db->query("ALTER TABLE {$table} ADD `{$column}` {$definition}");
+				}
+			}
 		}
-		if (!$this->db->query("SHOW COLUMNS FROM {$table} LIKE 'api'")->num_rows) {
-			$this->db->query("ALTER TABLE {$table} ADD `api` VARCHAR(255) NOT NULL DEFAULT '' AFTER `host`");
-		}
-		$this->db->query("UPDATE {$table} SET `api` = CONCAT(TRIM(TRAILING '/' FROM `endpoint`), '/api/v1') WHERE `api` = ''");
-		$this->db->query("ALTER TABLE {$table} DROP COLUMN `endpoint`, ALTER `api` DROP DEFAULT");
 	}
 
 	public function connection(string $host): ?Connection {
 		$query = "SELECT * FROM `{$this->prefix}monokulo_connection` WHERE `host` = '" . $this->db->escape($host) . "'";
 		$row = $this->db->query($query)->row;
-		if ($row && !isset($row['api'])) {
+		if ($row && !array_key_exists('onion_api', $row)) {
 			$this->upgrade();
 			$row = $this->db->query($query)->row;
 		}
@@ -116,16 +140,37 @@ final class Repository {
 			$row['secret_token'],
 			$row['webhook_secret'],
 			(int)$row['connected_at'],
+			$row['onion_api'],
 		);
 	}
 
+	/** Saves a new connection for its host, in place of any before (and its kept entry). */
 	public function saveConnection(Connection $c): void {
 		$this->upgrade();
 		$e = fn(string $v): string => "'" . $this->db->escape($v) . "'";
 		$this->db->query(
-			"REPLACE INTO `{$this->prefix}monokulo_connection` (`host`, `api`, `public_key`, `secret_token`, `webhook_secret`, `connected_at`) VALUES ("
-			. implode(', ', [$e($c->host), $e($c->api), $e($c->publicKey), $e($c->secretToken), $e($c->webhookSecret), (int)$c->connectedAt])
+			"REPLACE INTO `{$this->prefix}monokulo_connection` (`host`, `api`, `onion_api`, `public_key`, `secret_token`, `webhook_secret`, `connected_at`) VALUES ("
+			. implode(', ', [$e($c->host), $e($c->api), $e($c->onionApi), $e($c->publicKey), $e($c->secretToken), $e($c->webhookSecret), (int)$c->connectedAt])
 			. ')'
+		);
+	}
+
+	public function entry(Connection $connection): ?Entry {
+		$row = $this->db->query(
+			"SELECT `entry`, `entry_etag`, `entry_expires_at` FROM `{$this->prefix}monokulo_connection` WHERE `host` = '" . $this->db->escape($connection->host)
+			. "' AND `secret_token` = '" . $this->db->escape($connection->secretToken) . "'"
+		)->row;
+		$body = $row && is_string($row['entry']) ? json_decode($row['entry'], true) : null;
+
+		return is_array($body) ? new Entry($body, $row['entry_etag'], (int)$row['entry_expires_at']) : null;
+	}
+
+	/** Kept on the connection's row while it has the same key: connecting again starts afresh. */
+	public function keepEntry(Connection $connection, Entry $entry): void {
+		$this->db->query(
+			"UPDATE `{$this->prefix}monokulo_connection` SET `entry` = '" . $this->db->escape((string)json_encode($entry->body))
+			. "', `entry_etag` = '" . $this->db->escape($entry->etag) . "', `entry_expires_at` = " . $entry->expiresAt
+			. " WHERE `host` = '" . $this->db->escape($connection->host) . "' AND `secret_token` = '" . $this->db->escape($connection->secretToken) . "'"
 		);
 	}
 
@@ -161,19 +206,20 @@ final class Repository {
 		return ['store_id' => (int)$row['store_id'], 'host' => $row['host'], 'admin_return' => $row['admin_return']];
 	}
 
-	public function recordOrder(string $monokuloOrderId, int $orderId, int $storeId, string $host, string $amount, string $currency, int $now): void {
+	/** `dashboardUrl` is the order's `mk:dashboard-order` page, or ''. */
+	public function recordOrder(string $monokuloOrderId, int $orderId, int $storeId, string $host, string $amount, string $currency, string $dashboardUrl, int $now): void {
 		$this->db->query(
-			"INSERT IGNORE INTO `{$this->prefix}monokulo_order` (`monokulo_order_id`, `order_id`, `store_id`, `host`, `amount`, `currency`, `created_at`) VALUES ('"
+			"INSERT IGNORE INTO `{$this->prefix}monokulo_order` (`monokulo_order_id`, `order_id`, `store_id`, `host`, `amount`, `currency`, `dashboard_url`, `created_at`) VALUES ('"
 			. $this->db->escape($monokuloOrderId) . "', " . $orderId . ', ' . $storeId . ", '" . $this->db->escape($host) . "', '"
-			. $this->db->escape($amount) . "', '" . $this->db->escape($currency) . "', " . $now . ')'
+			. $this->db->escape($amount) . "', '" . $this->db->escape($currency) . "', '" . $this->db->escape($dashboardUrl) . "', " . $now . ')'
 		);
 	}
 
 	/**
-	 * The OpenCart order a Monokulo order pays, and whether it is that
-	 * order's newest Monokulo order.
+	 * The OpenCart order a Monokulo order pays, whether it is that order's
+	 * newest Monokulo order, and its page on the merchant's dashboard ('').
 	 *
-	 * @return array{order_id: int, store_id: int, host: string, latest: bool}|null
+	 * @return array{order_id: int, store_id: int, host: string, latest: bool, dashboard_url: string}|null
 	 */
 	public function findOrder(string $monokuloOrderId): ?array {
 		$row = $this->db->query("SELECT * FROM `{$this->prefix}monokulo_order` WHERE `monokulo_order_id` = '" . $this->db->escape($monokuloOrderId) . "'")->row;
@@ -186,10 +232,11 @@ final class Repository {
 		)->row;
 
 		return [
-			'order_id' => (int)$row['order_id'],
-			'store_id' => (int)$row['store_id'],
-			'host'     => $row['host'],
-			'latest'   => $newest && $newest['monokulo_order_id'] === $row['monokulo_order_id'],
+			'order_id'      => (int)$row['order_id'],
+			'store_id'      => (int)$row['store_id'],
+			'host'          => $row['host'],
+			'latest'        => $newest && $newest['monokulo_order_id'] === $row['monokulo_order_id'],
+			'dashboard_url' => $row['dashboard_url'],
 		];
 	}
 

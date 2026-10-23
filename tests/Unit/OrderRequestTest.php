@@ -41,7 +41,7 @@ final class OrderRequestTest extends TestCase {
 			'three decimals'         => [1.2345, 'KWD', 3, '1.235'],
 			'XMR keeps its places'   => [0.123456789012, 'XMR', 12, '0.123456789012'],
 			'XMR capped at 12'       => [1.5, 'xmr', 15, '1.5'],
-			'never padded to 8'      => [1.5, 'EUR', 8, '1.5'],
+			'trimmed at 8 places'    => [1.5, 'EUR', 8, '1.5'],
 			'negative places'        => [3.0, 'EUR', -1, '3'],
 			'no thousands separator' => [1234567.0, 'EUR', 2, '1234567'],
 		];

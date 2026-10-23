@@ -5,6 +5,7 @@ require_once __DIR__ . '/../../../system/library/monokulo/autoload.php';
 
 use Monokulo\OpenCart\ConnectLink;
 use Monokulo\OpenCart\Repository;
+use Monokulo\OpenCart\Url;
 
 /**
  * Monokulo's settings page: the Monokulo address, which order status each
@@ -20,7 +21,7 @@ class Monokulo extends \Opencart\System\Engine\Controller {
 		'expired' => 14 // Expired
 	];
 
-	private const CONNECT_ERRORS = ['permission', 'address', 'host', 'finish', 'unavailable', 'unreachable'];
+	private const CONNECT_ERRORS = ['permission', 'address', 'host', 'finish', 'unavailable', 'busy', 'unreachable'];
 
 	public function index(): void {
 		$this->load->language('extension/monokulo/payment/monokulo');
@@ -76,6 +77,7 @@ class Monokulo extends \Opencart\System\Engine\Controller {
 				'url'       => $store['url'],
 				'host'      => $host,
 				'connected' => $connection ? sprintf($this->language->get('text_connected_as'), $connection->publicKey, date($this->language->get('datetime_format'), $connection->connectedAt)) : '',
+				'tor'       => $connection && $connection->onionApi !== '' ? sprintf($this->language->get('text_tor'), Url::origin($connection->onionApi)) : '',
 				'connect'   => $this->url->link('extension/monokulo/payment/monokulo.connect', $token . '&store_id=' . $store['store_id'])
 			];
 		}

@@ -10,6 +10,7 @@ use Monokulo\OpenCart\Logger;
 use Monokulo\OpenCart\OrderRequest;
 use Monokulo\OpenCart\Trace;
 use Monokulo\OpenCart\TransportError;
+use Monokulo\OpenCart\Url;
 use Monokulo\OpenCart\WebhookReceiver;
 
 /**
@@ -38,6 +39,11 @@ class Monokulo extends \Opencart\System\Engine\Controller {
 	 * with the payment link in its history and confirmation email), empties
 	 * the cart as OpenCart's own success page does, and answers with the
 	 * Monokulo checkout to send the customer to.
+	 *
+	 * A customer on the shop's onion address stays on Tor: they are sent to
+	 * the order's checkout on Monokulo's onion address, never its web one.
+	 * When Monokulo has no onion address they are told Monero can't be paid
+	 * over Tor here, and the order is left as it was.
 	 */
 	public function confirm(): void {
 		$this->load->language('extension/monokulo/payment/monokulo');
@@ -87,9 +93,16 @@ class Monokulo extends \Opencart\System\Engine\Controller {
 		}
 
 		if (!$json) {
-			$checkout = $monokulo_order['checkout_url'];
+			$checkout = Url::isOnion((string)($this->request->server['HTTP_HOST'] ?? '')) ? $monokulo_order['onion_checkout_url'] : $monokulo_order['checkout_url'];
 
-			$this->model_extension_monokulo_payment_monokulo->repository()->recordOrder($monokulo_order['order_id'], $order_id, (int)$order_info['store_id'], $connection->host, $body['amount'], $body['currency'], time());
+			if ($checkout === '') {
+				$this->log()->error(sprintf('Order %d: the customer is on the shop\'s onion address, but Monokulo order %s has no onion checkout (mk:onion-checkout): your Monokulo has no onion address, so they were not sent to pay on the web.', $order_id, $monokulo_order['order_id']));
+				$json['error'] = $this->language->get('error_no_onion');
+			}
+		}
+
+		if (!$json) {
+			$this->model_extension_monokulo_payment_monokulo->repository()->recordOrder($monokulo_order['order_id'], $order_id, (int)$order_info['store_id'], $connection->host, $body['amount'], $body['currency'], $monokulo_order['dashboard_url'], time());
 			$this->model_checkout_order->addHistory($order_id, (int)$this->config->get('payment_monokulo_pending_status_id'), sprintf($this->language->get('note_started'), $checkout), true);
 			$this->log()->info(sprintf('Order %d: customer sent to Monokulo order %s.', $order_id, $monokulo_order['order_id']));
 
@@ -185,22 +198,28 @@ class Monokulo extends \Opencart\System\Engine\Controller {
 		} catch (ApiError $e) {
 			$this->log()->error(sprintf('Connect finish at %s failed: HTTP %d: %s', $address, $e->status, $e->detail));
 
-			return $e->status === 503 ? 'monokulo_connect_error=unavailable' : 'monokulo_connect_error=finish';
+			return 'monokulo_connect_error=' . match ($e->problem) {
+				'no-public-address'                  => 'unavailable',
+				'rate-limited', 'challenge-required' => 'busy',
+				default                              => 'finish',
+			};
 		} catch (TransportError $e) {
 			$this->log()->error(sprintf('Connect finish at %s failed: could not reach it: %s', $address, $e->getMessage()));
 
 			return 'monokulo_connect_error=unreachable';
 		}
 
-		$model->repository()->saveConnection(new Connection($host, $credentials['api'], $credentials['public_key'], $credentials['secret_token'], $credentials['webhook_signing_secret'], time()));
+		$model->repository()->saveConnection(new Connection($host, $credentials['api'], $credentials['public_key'], $credentials['secret_token'], $credentials['webhook_signing_secret'], time(), $credentials['onion_api']));
 		$model->enable();
-		$this->log()->info(sprintf('%s connected to Monokulo as %s.', $host, $credentials['public_key']));
+		$this->log()->info(sprintf('%s connected to Monokulo as %s%s.', $host, $credentials['public_key'], $credentials['onion_api'] !== '' ? ', on Tor at ' . $credentials['onion_api'] : ''));
 
 		return 'monokulo_connected=1';
 	}
 
 	private function client(): Client {
-		return new Client($this->trace());
+		$this->load->model('extension/monokulo/payment/monokulo');
+
+		return new Client($this->trace(), $this->model_extension_monokulo_payment_monokulo->repository());
 	}
 
 	private function trace(): Trace {
