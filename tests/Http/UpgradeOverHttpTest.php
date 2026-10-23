@@ -8,11 +8,11 @@ use PHPUnit\Framework\TestCase;
 
 /**
  * A shop that connected with the version before (its tables without
- * `onion_api`, the kept entry, or each order's dashboard page) keeps its
- * connection and its orders once the new files are in place, without
- * connecting again or reinstalling: the columns are added the first time
- * a request finds an old row. It has no onion entry until it connects
- * again, and its earlier orders' notes go without an "In Monokulo" link.
+ * `onion_api` or the kept entry) keeps its connection and its orders once
+ * the new files are in place, without connecting again or reinstalling:
+ * the columns are added the first time a request finds an old row. It has
+ * no onion entry until it connects again; its earlier orders' notes link
+ * them in Monokulo all the same, since every webhook carries the link.
  */
 final class UpgradeOverHttpTest extends TestCase {
 	private int $orderId;
@@ -65,7 +65,7 @@ final class UpgradeOverHttpTest extends TestCase {
 
 	private function assertUpgraded(): void {
 		$this->assertSame(['host', 'api', 'onion_api', 'public_key', 'secret_token', 'webhook_secret', 'connected_at', 'entry', 'entry_etag', 'entry_expires_at'], $this->columns('oc_monokulo_connection'));
-		$this->assertContains('dashboard_url', $this->columns('oc_monokulo_order'));
+		$this->assertSame(['seq', 'monokulo_order_id', 'order_id', 'store_id', 'host', 'amount', 'currency', 'created_at'], $this->columns('oc_monokulo_order'), 'nothing added to the orders');
 		$row = Shop::rows("SELECT * FROM oc_monokulo_connection")[0];
 		$this->assertSame(['https://pay.example.com/monokulo/api/v1', '', 'pk_old', 'sk_old'], [$row['api'], $row['onion_api'], $row['public_key'], $row['secret_token']]);
 	}
@@ -84,7 +84,7 @@ final class UpgradeOverHttpTest extends TestCase {
 		$this->assertStringContainsString('pk_old', $browser->get(Shop::adminUrl('extension/monokulo/payment/monokulo', $token))->text());
 	}
 
-	/** A webhook for an order made before: applied, with no "In Monokulo" link, since the order has no dashboard page kept. */
+	/** A webhook for an order made before: applied, with the "In Monokulo" link the webhook carries. */
 	public function test_over_http_an_old_orders_webhook_is_applied(): void {
 		$delivery = Vectors::delivery('order.paid');
 		$t = time();
@@ -95,7 +95,7 @@ final class UpgradeOverHttpTest extends TestCase {
 		$this->assertSame(200, $status);
 		$this->assertSame('2', Shop::rows("SELECT order_status_id FROM oc_order WHERE order_id = " . $this->orderId)[0]['order_status_id']);
 		$history = Shop::rows("SELECT comment FROM oc_order_history WHERE order_id = " . $this->orderId . " ORDER BY order_history_id");
-		$this->assertSame('Monokulo: paid in full.', end($history)['comment']);
+		$this->assertSame('Monokulo: paid in full. In Monokulo: ' . json_decode($delivery['body'], true)['_links']['mk:dashboard-order']['href'], end($history)['comment']);
 		$this->assertUpgraded();
 	}
 }

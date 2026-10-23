@@ -112,7 +112,7 @@ class Monokulo extends \Opencart\System\Engine\Controller {
 		}
 
 		if (!$json) {
-			$this->model_extension_monokulo_payment_monokulo->repository()->recordOrder($monokulo_order['order_id'], $order_id, (int)$order_info['store_id'], $connection->host, $body['amount'], $body['currency'], $monokulo_order['dashboard_url'], time());
+			$this->model_extension_monokulo_payment_monokulo->repository()->recordOrder($monokulo_order['order_id'], $order_id, (int)$order_info['store_id'], $connection->host, $body['amount'], $body['currency'], time());
 			$this->model_checkout_order->addHistory($order_id, (int)$this->config->get('payment_monokulo_pending_status_id'), sprintf($this->language->get('note_started'), $checkout), true);
 			$this->log()->info(sprintf('Order %d: customer sent to Monokulo order %s.', $order_id, $monokulo_order['order_id']));
 
@@ -209,9 +209,9 @@ class Monokulo extends \Opencart\System\Engine\Controller {
 			$this->log()->error(sprintf('Connect finish at %s failed: HTTP %d: %s', $address, $e->status, $e->detail));
 
 			return 'monokulo_connect_error=' . match ($e->problem) {
-				'no-public-address'                  => 'unavailable',
-				'rate-limited', 'challenge-required' => 'busy',
-				default                              => 'finish',
+				'no-public-address' => 'unavailable',
+				'rate-limited'      => 'busy',
+				default             => 'finish',
 			};
 		} catch (TransportError $e) {
 			$this->log()->error(sprintf('Connect finish at %s failed: could not reach it: %s', $address, $e->getMessage()));

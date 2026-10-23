@@ -16,6 +16,21 @@ final class WebhookEventTest extends TestCase {
 		$this->assertSame($delivery['headers']['X-Monokulo-Event'], $event->event);
 		$this->assertSame($delivery['headers']['X-Monokulo-Event-Id'], $event->eventId);
 		$this->assertSame(Vectors::orderId(), $event->orderId);
+		$this->assertSame(json_decode($delivery['body'], true)['_links']['mk:dashboard-order']['href'], $event->dashboardUrl);
+		$this->assertStringEndsWith('/orders/' . Vectors::orderId(), $event->dashboardUrl);
+	}
+
+	/** The order's dashboard page comes only as an http(s) address in `_links`; anything else is no link. */
+	public function test_the_dashboard_page_is_an_http_address_or_nothing(): void {
+		$with = static fn(string $links): string => WebhookEvent::parse('{"event":"order.paid","event_id":"evt_1","order_id":"o1","_links":' . $links . '}')->dashboardUrl;
+
+		$this->assertSame('https://pay.example.com/stores/s/orders/o1', $with('{"mk:dashboard-order":{"href":"https://pay.example.com/stores/s/orders/o1"}}'));
+		$this->assertSame('http://x.onion/stores/s/orders/o1', $with('{"mk:dashboard-order":{"href":"http://x.onion/stores/s/orders/o1"}}'));
+		$this->assertSame('', $with('{"mk:dashboard-order":{"href":"javascript:alert(1)"}}'));
+		$this->assertSame('', $with('{"mk:dashboard-order":{"href":"/stores/s/orders/o1"}}'));
+		$this->assertSame('', $with('{"mk:dashboard-order":{"href":5}}'));
+		$this->assertSame('', $with('{"mk:checkout":{"href":"https://pay.example.com/checkout/o1"}}'));
+		$this->assertSame('', $with('"nope"'));
 	}
 
 	public function test_the_double_spend_events_carry_their_transaction(): void {
@@ -48,5 +63,6 @@ final class WebhookEventTest extends TestCase {
 
 		$this->assertSame('order.refunded', $event->event);
 		$this->assertNull($event->txid);
+		$this->assertSame('', $event->dashboardUrl);
 	}
 }

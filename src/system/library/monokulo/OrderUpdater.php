@@ -9,8 +9,7 @@ namespace Monokulo\OpenCart;
  */
 interface OrderUpdater {
 	/**
-	 * @param bool   $latest       whether `event` is about the order's newest Monokulo order
-	 * @param string $dashboardUrl the Monokulo order's page on the merchant's dashboard, or ''
+	 * @param bool $latest whether `event` is about the order's newest Monokulo order
 	 */
-	public function apply(int $orderId, Decision $decision, WebhookEvent $event, bool $latest, string $dashboardUrl): void;
+	public function apply(int $orderId, Decision $decision, WebhookEvent $event, bool $latest): void;
 }
