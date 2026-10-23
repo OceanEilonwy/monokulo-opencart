@@ -87,6 +87,14 @@ must be one your Monokulo prices (or XMR itself): otherwise the customer is
 asked to choose another currency or payment method, and the shop's log
 says why (Monokulo's own explanation of the problem).
 
+When Monokulo has no exchange rate for the currency right now (its rate
+providers are down or rate limiting it: `rates-unavailable`), or its payment
+engine is busy (`engine-unavailable`), no order is made: the customer is
+asked to try again shortly, and the shop's log says which, with how long
+Monokulo asked to wait when it said. Pressing **Pay with Monero** again
+sends the same request with the same idempotency key, so it can never make
+two orders.
+
 ## Order statuses
 
 Monokulo tells the shop about each change with a signed webhook, and the
@@ -171,7 +179,7 @@ scripts/test up          # build and start OpenCart (PHP_VERSION=8.1|8.4|8.5, de
 scripts/test all         # build the zip, install it through the Extension Installer, run every suite
 scripts/test catalog     # one suite: unit, catalog, admin or http (extra args go to PHPUnit)
 COVERAGE=1 scripts/test all   # and coverage/summary.txt, coverage/html/
-scripts/smoke            # against a real Monokulo (MONOKULO_BIN=path or MONOKULO_IMAGE=image)
+scripts/smoke            # against a real Monokulo (MONOKULO_BIN=path or MONOKULO_IMAGE=image, and MONOKULO_OPENAPI=its openapi.json)
 scripts/test down
 ```
 
@@ -191,7 +199,10 @@ Admin: `http://localhost:8090/admin/`, user `admin`, password
   order, read back through the API, is pending, and its dashboard page
   opens; a guest on the shop's onion address is sent to the onion checkout.
   Nothing is paid. It also checks the stand-in Monokulo the other suites
-  use against the real one's answers and its OpenAPI document.
+  use against the real one's answers, its OpenAPI document, and the
+  examples recorded in that document as written at the pinned commit
+  (`MONOKULO_OPENAPI`, from `cargo xtask api openapi --out FILE` in a
+  checkout of it; never committed here).
 
 Webhook tests use Monokulo's published test vectors, vendored in
 `tests/vectors` and pinned to a monokulo commit (`tests/vectors/PIN`).

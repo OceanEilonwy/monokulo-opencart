@@ -8,8 +8,18 @@
 #   MONOKULO_IMAGE=ghcr.io/...       its Docker image (the default:
 #                                    monokulo:smoke, built by CI from the
 #                                    commit in tests/vectors/PIN)
+#
+# MONOKULO_OPENAPI=/path/to/openapi.json is Monokulo's OpenAPI document
+# written at that commit (`cargo xtask api openapi --out FILE` in a checkout
+# of it), whose recorded examples the stand-in's answers are checked
+# against. Required.
 set -eu
 cd "$(dirname "$0")/.."
+
+if [ -z "${MONOKULO_OPENAPI:-}" ] || [ ! -s "$MONOKULO_OPENAPI" ]; then
+	echo "set MONOKULO_OPENAPI to Monokulo's OpenAPI document written at the commit in tests/vectors/PIN (cargo xtask api openapi --out FILE)" >&2
+	exit 1
+fi
 
 url=http://localhost:8081
 # Another Monokulo on the port would be tested in this one's place.
@@ -63,4 +73,8 @@ for i in $(seq 1 60); do
 	sleep 1
 done
 
-MONOKULO_URL=$url scripts/test smoke "$@"
+# Into the repository: the suite runs in the OpenCart container, which has it at /repo.
+mkdir -p .phpunit.cache
+cp "$MONOKULO_OPENAPI" .phpunit.cache/monokulo-openapi.json
+
+MONOKULO_URL=$url MONOKULO_OPENAPI_FILE=/repo/.phpunit.cache/monokulo-openapi.json scripts/test smoke "$@"

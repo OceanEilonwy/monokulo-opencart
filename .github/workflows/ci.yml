@@ -9,8 +9,9 @@
 #   (tests/vectors, pinned in tests/vectors/PIN). 8.4 also reports coverage.
 # - vectors: the vendored vectors are still the ones at the pinned commit.
 # - smoke: against a real Monokulo built from the pinned commit (or a given
-#   image): on main, nightly and by hand, not on pull requests (building
-#   Monokulo takes a while).
+#   image), with the OpenAPI document written at that commit: on main,
+#   nightly and by hand, not on pull requests (building Monokulo takes a
+#   while).
 name: CI
 
 on:
@@ -116,6 +117,17 @@ jobs:
           . tests/vectors/PIN
           auth=${MONOKULO_READ_TOKEN:+x-access-token:$MONOKULO_READ_TOKEN@}
           docker build -t monokulo:smoke "https://${auth}${repository#https://}.git#${commit}"
+      - name: Write Monokulo's OpenAPI document at the pinned commit, with its examples
+        env:
+          MONOKULO_READ_TOKEN: ${{ secrets.MONOKULO_READ_TOKEN }}
+        run: |
+          . tests/vectors/PIN
+          auth=${MONOKULO_READ_TOKEN:+x-access-token:$MONOKULO_READ_TOKEN@}
+          git init -q "$RUNNER_TEMP/monokulo"
+          cd "$RUNNER_TEMP/monokulo"
+          git fetch -q --depth 1 "https://${auth}${repository#https://}.git" "$commit"
+          git checkout -q FETCH_HEAD
+          cargo xtask api openapi --out "$RUNNER_TEMP/openapi.json"
       - name: Start OpenCart and install the extension
         run: |
           scripts/test up
@@ -123,4 +135,5 @@ jobs:
       - name: Smoke test
         env:
           MONOKULO_IMAGE: ${{ inputs.monokulo_image || 'monokulo:smoke' }}
+          MONOKULO_OPENAPI: ${{ runner.temp }}/openapi.json
         run: scripts/smoke

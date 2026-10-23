@@ -22,7 +22,7 @@ compose() {
 run() {
 	# umask 0: files the tests make in the shop (its log, cache) stay writable
 	# by Apache, as Apache's stay writable by the tests.
-	compose exec -T --user "$(id -u):$(id -g)" -e HOME=/tmp -e MONOKULO_URL="${MONOKULO_URL:-}" -w /repo opencart sh -c 'umask 0000 && exec "$@"' sh "$@"
+	compose exec -T --user "$(id -u):$(id -g)" -e HOME=/tmp -e MONOKULO_URL="${MONOKULO_URL:-}" -e MONOKULO_OPENAPI_FILE="${MONOKULO_OPENAPI_FILE:-}" -w /repo opencart sh -c 'umask 0000 && exec "$@"' sh "$@"
 }
 
 suite() {
