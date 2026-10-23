@@ -42,10 +42,16 @@ to the shop over **https** (plain http only for `localhost` or a `.onion`
 address), so the shop's address must be https.
 
 Connecting gives the shop the store's keys and the address of Monokulo's
-[HTTP API](https://docs.monokulo.com/api/) (`/api/v1` on the Monokulo
-address). The shop's server makes each order there with the store's secret
-key, following the API's `create-order` form, and sends the customer to the
-order's checkout page (`/checkout/<order id>`).
+[HTTP API](https://docs.monokulo.com/api/) entry (`/api/v1` on the Monokulo
+address, under its path if it is served under one:
+`https://example.com/monokulo`), and the same entry on Monokulo's onion
+address when it has one. The shop's server makes each order with the
+store's secret key, following the entry's `create-order` form, and sends
+the customer to the order's checkout page (its `mk:checkout` link). It
+builds no Monokulo address itself: every one is a link or a form from the
+entry. The entry is kept as long as Monokulo's `Cache-Control` says (an
+hour), then checked again with its `ETag`, so an order is usually one
+request to Monokulo.
 
 Each OpenCart store connects on its own: a Monokulo store is one web
 address. Stores that share an address share one connection. **Connect
@@ -59,6 +65,18 @@ Monokulo checkout page for it: the amount in XMR, the address, a QR code,
 and the payment's progress. The payment link is also in the order
 confirmation email and on the order in the customer's account, so they can
 come back to it.
+
+### On Tor
+
+A customer browsing the shop on its own `.onion` address stays on Tor: they
+are sent to the order's checkout on Monokulo's onion address (the order's
+`mk:onion-checkout` link), never to its web address, and that is the link
+in their confirmation. When your Monokulo has no onion address there is
+nowhere on Tor to send them: they are told Monero can't be paid over Tor
+right now, the order is left as it was, and the shop's log says why. Give
+your Monokulo an onion address (Tor inside it, or your own tor) and orders
+carry one at once; the settings page shows a store's onion address once it
+connects (again) after that.
 
 The shop asks Monokulo for the order total in the customer's currency, in
 that currency's own decimal places (as set in OpenCart) without trailing
@@ -80,7 +98,7 @@ statuses**; the defaults:
 | (Pay with Monero pressed) | The customer was sent to pay | **Order placed**: Pending | The payment link; the customer is told |
 | `order.unconfirmed`, `order.confirming` | A payment was seen; waiting for confirmations | **Payment seen**: Pending | Note |
 | `order.partial` | Less than the amount due arrived (underpaid) | **Part paid**: Pending | Note |
-| `order.paid` | Paid in full | **Paid**: Processing | The customer is told; note with a link to the order in Monokulo |
+| `order.paid` | Paid in full | **Paid**: Processing | The customer is told; note with a link to the order in Monokulo (its `mk:dashboard-order` page, kept when the order was made) |
 | `order.overpaid` | Paid with more than was due | **Paid**: Processing | As paid, and a note that the excess isn't refunded automatically |
 | `order.expired` | The payment window closed without full payment | **Expired**: Expired | Note: any funds received stay at the address |
 | `order.double_spend_detected` | A payment was double-spent and no longer counts | unchanged | Fraud alert note (the status change, if any, comes as its own event) |
@@ -122,14 +140,17 @@ settings under *Webhooks*.
 The extension writes to OpenCart's `storage/logs/monokulo.log`, each line
 with the request's trace id, which matches Monokulo's own logs. **Send
 errors to Monokulo** also sends its warnings and errors to your Monokulo
-(`/api/v1/logs`), when the store there has client logs turned on.
+(with the API entry's `send-logs` form), when the store there has client
+logs turned on.
 
-## Upgrading from 0.1
+## Upgrading
 
-Version 0.1 saved Monokulo's address with each connection. Later versions
-use Monokulo's API at `<that address>/api/v1`, and move the saved
-connections onto it the first time they read them: connected stores keep
-working without connecting again.
+Connected stores keep working without connecting again: the extension adds
+what it now keeps to its tables (on install, or the first time it reads a
+connection from before). Until a store connects again it has no onion
+entry kept, which changes nothing for customers (each order carries its own
+onion checkout); orders made before the upgrade have no "In Monokulo" link
+in their later notes.
 
 ## Uninstall
 
@@ -161,11 +182,13 @@ Admin: `http://localhost:8090/admin/`, user `admin`, password
   database transaction.
 - **http**: real HTTP through Apache: the Extension Installer, the connect
   flow's redirects, webhooks.
-- **smoke**: a fresh Monokulo (`docker/monokulo-smoke.toml`): sign up, add
-  a watch-only wallet, connect, then a guest checkout lands on the Monokulo
-  checkout page, and the order, read back through the API, is pending.
+- **smoke**: a fresh Monokulo with an onion address
+  (`docker/monokulo-smoke.toml`): sign up, add a watch-only wallet,
+  connect, then a guest checkout lands on the Monokulo checkout page, the
+  order, read back through the API, is pending, and its dashboard page
+  opens; a guest on the shop's onion address is sent to the onion checkout.
   Nothing is paid. It also checks the stand-in Monokulo the other suites
-  use against the real one's OpenAPI document.
+  use against the real one's answers and its OpenAPI document.
 
 Webhook tests use Monokulo's published test vectors, vendored in
 `tests/vectors` and pinned to a monokulo commit (`tests/vectors/PIN`).

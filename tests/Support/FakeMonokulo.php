@@ -110,6 +110,7 @@ final class FakeMonokulo {
 			'mk:checkout'        => ['href' => $prefix . '/checkout/' . $orderId, 'type' => 'text/html'],
 			'mk:dashboard-order' => ['href' => $prefix . '/stores/' . self::STORE_ID . '/orders/' . $orderId, 'type' => 'text/html'],
 			'mk:order-events'    => ['href' => $prefix . '/api/v1/orders/' . $orderId . '/events', 'type' => 'text/event-stream'],
+			'curies'             => [['name' => 'mk', 'href' => 'https://docs.monokulo.com/rels/{rel}', 'templated' => true]],
 		];
 		if ($onion) {
 			$links['mk:onion-checkout'] = ['href' => self::ONION . '/checkout/' . $orderId, 'type' => 'text/html'];
