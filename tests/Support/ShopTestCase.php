@@ -2,7 +2,6 @@
 namespace Monokulo\OpenCart\Tests\Support;
 
 use Monokulo\OpenCart\Connection;
-use Monokulo\OpenCart\Plugin;
 use Monokulo\OpenCart\Repository;
 use PHPUnit\Framework\TestCase;
 
@@ -84,8 +83,8 @@ abstract class ShopTestCase extends TestCase {
 	}
 
 	/** Connects `host` to the stand-in Monokulo, as the connect flow would. */
-	protected function connect(string $host = self::HOST, string $version = Plugin::CONNECTION_VERSION): Connection {
-		$connection = new Connection($host, self::$monokulo->url, 'pk_test', 'sk_test', Vectors::secret(), $version, 1760000000);
+	protected function connect(string $host = self::HOST): Connection {
+		$connection = new Connection($host, self::$monokulo->url, 'pk_test', 'sk_test', Vectors::secret(), 1760000000);
 		$this->repository()->saveConnection($connection);
 
 		return $connection;

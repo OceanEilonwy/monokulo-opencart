@@ -8,7 +8,6 @@ use Monokulo\OpenCart\Client;
 use Monokulo\OpenCart\Connection;
 use Monokulo\OpenCart\Logger;
 use Monokulo\OpenCart\OrderRequest;
-use Monokulo\OpenCart\Plugin;
 use Monokulo\OpenCart\Trace;
 use Monokulo\OpenCart\TransportError;
 use Monokulo\OpenCart\WebhookReceiver;
@@ -60,7 +59,7 @@ class Monokulo extends \Opencart\System\Engine\Controller {
 
 		$connection = $this->model_extension_monokulo_payment_monokulo->connection();
 
-		if (!$json && (!$connection || $connection->needsReconnect())) {
+		if (!$json && !$connection) {
 			$json['error'] = $this->language->get('error_not_connected');
 		}
 
@@ -193,7 +192,7 @@ class Monokulo extends \Opencart\System\Engine\Controller {
 			return 'monokulo_connect_error=unreachable';
 		}
 
-		$model->repository()->saveConnection(new Connection($host, $credentials['endpoint'], $credentials['public_key'], $credentials['secret_token'], $credentials['webhook_signing_secret'], Plugin::CONNECTION_VERSION, time()));
+		$model->repository()->saveConnection(new Connection($host, $credentials['endpoint'], $credentials['public_key'], $credentials['secret_token'], $credentials['webhook_signing_secret'], time()));
 		$model->enable();
 		$this->log()->info(sprintf('%s connected to Monokulo as %s.', $host, $credentials['public_key']));
 

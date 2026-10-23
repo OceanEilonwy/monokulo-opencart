@@ -1,7 +1,6 @@
 <?php
 namespace Monokulo\OpenCart\Tests\Admin;
 
-use Monokulo\OpenCart\Plugin;
 use Monokulo\OpenCart\Tests\Support\OpenCart;
 use Monokulo\OpenCart\Tests\Support\ShopTestCase;
 
@@ -43,7 +42,6 @@ final class SettingsTest extends ShopTestCase {
 	public function test_the_page_shows_each_store_and_its_connection(): void {
 		$storeId = $this->addSecondStore();
 		$this->connect(self::HOST);
-		$this->connect(self::SECOND_HOST, '0');
 
 		$html = $this->admin(self::PAGE)['output'];
 
@@ -51,7 +49,6 @@ final class SettingsTest extends ShopTestCase {
 		$this->assertStringContainsString('value="' . self::$monokulo->url . '"', $html);
 		$this->assertStringContainsString('Connected as pk_test', $html);
 		$this->assertStringContainsString('http://127.0.0.1:8090/', $html);
-		$this->assertStringContainsString('Connect again: this store was connected by an older version', $html);
 		$this->assertStringContainsString('route=extension/monokulo/payment/monokulo.connect&amp;user_token=' . self::TOKEN . '&amp;store_id=0', $html);
 		$this->assertStringContainsString('&amp;store_id=' . $storeId . '"', $html);
 		foreach (['Order placed', 'Payment seen', 'Part paid', 'Paid', 'Expired'] as $label) {
@@ -176,7 +173,7 @@ final class SettingsTest extends ShopTestCase {
 		$this->admin(self::PAGE . '.install');
 
 		$this->assertSame([
-			'payment_monokulo_address'           => '',
+			'payment_monokulo_address'           => 'https://monokulo.com',
 			'payment_monokulo_expired_status_id' => '14',
 			'payment_monokulo_forward_errors'    => '0',
 			'payment_monokulo_geo_zone_id'       => '0',
@@ -187,7 +184,7 @@ final class SettingsTest extends ShopTestCase {
 			'payment_monokulo_status'            => '0',
 			'payment_monokulo_waiting_status_id' => '1',
 		], $this->sorted($this->settings()));
-		$this->assertSame(Plugin::CONNECTION_VERSION, $this->repository()->connection(self::HOST)->version);
+		$this->assertNotNull($this->repository()->connection(self::HOST));
 	}
 
 	private function sorted(array $settings): array {

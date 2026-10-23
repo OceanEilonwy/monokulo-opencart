@@ -19,7 +19,7 @@ use Monokulo\OpenCart\WebhookEvent;
 class Monokulo extends \Opencart\System\Engine\Model {
 	/**
 	 * Monero is offered when the extension is on, this store's host is
-	 * connected (by this plugin version's rules), the cart has no
+	 * connected, the cart has no
 	 * subscription (a Monero payment can't be taken again by itself), and the
 	 * payment address is in the chosen geo zone.
 	 *
@@ -32,7 +32,7 @@ class Monokulo extends \Opencart\System\Engine\Model {
 
 		$connection = $this->connection();
 
-		if (!$connection || $connection->needsReconnect()) {
+		if (!$connection) {
 			$status = false;
 		} elseif ($this->cart->hasSubscription()) {
 			$status = false;
@@ -132,6 +132,17 @@ class Monokulo extends \Opencart\System\Engine\Model {
 
 				if (!$status) {
 					throw new \RuntimeException('no order status is set for "' . $decision->status . '"');
+				}
+
+				// A paid order stays paid: a later event (expired, partial) only
+				// adds a note. Paid means the merchant's Paid status, or one of
+				// OpenCart's complete statuses (the merchant moved it on).
+				$paid = array_map('intval', array_merge([(int)$config->get('payment_monokulo_paid_status_id')], (array)$config->get('config_complete_status')));
+
+				if (!$decision->paid && in_array($current, $paid, true)) {
+					$orders->addHistory($orderId, $current, $note . ' ' . $language->get('note_kept_paid') . $link);
+
+					return;
 				}
 
 				if ($decision->notify) {

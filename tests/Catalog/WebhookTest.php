@@ -128,12 +128,39 @@ final class WebhookTest extends ShopTestCase {
 		$this->assertStringContainsString('was wrong and is withdrawn', $this->lastHistory()['comment']);
 	}
 
-	/** Every published delivery, in order, on one order: each applies once. */
+	/**
+	 * Once paid, a later event that isn't a payment (the order expired, or
+	 * went back to part paid after a double spend) leaves the order paid,
+	 * with a note: the merchant decides.
+	 */
+	public function test_a_paid_order_is_not_moved_back(): void {
+		$this->deliverVector('order.paid');
+
+		$this->assertSame(200, $this->deliverVector('order.partial'));
+		$this->assertSame(200, $this->deliverVector('order.expired'));
+
+		$this->assertSame(2, $this->orderStatus($this->orderId));
+		$this->assertStringContainsString('payment window closed', $this->lastHistory()['comment']);
+		$this->assertStringContainsString('The order was already paid, so its status is left as it is', $this->lastHistory()['comment']);
+	}
+
+	/** An order the merchant moved on to a complete status (Complete, Shipped) counts as paid too. */
+	public function test_a_completed_order_is_not_moved_back(): void {
+		$this->registry()->get('model_checkout_order')->addHistory($this->orderId, 5, 'completed by hand');
+
+		$this->assertSame(200, $this->deliverVector('order.expired'));
+
+		$this->assertSame(5, $this->orderStatus($this->orderId));
+		$this->assertStringContainsString('already paid', $this->lastHistory()['comment']);
+	}
+
+	/** Every published delivery, in order, on one order: each applies once, and the order ends paid. */
 	public function test_every_published_delivery_is_accepted(): void {
 		foreach (Vectors::deliveries() as $name => $delivery) {
 			$this->assertSame(200, $this->deliver($delivery['body'], $delivery['headers']['X-Monokulo-Signature']), $name);
 		}
 		$this->assertCount(1 + count(Vectors::deliveries()) + 3, $this->history($this->orderId), 'one entry each, two for each paid');
+		$this->assertSame(2, $this->orderStatus($this->orderId));
 	}
 
 	/** A delivery whose answer was lost is sent again; the second changes nothing. */

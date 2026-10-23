@@ -76,7 +76,6 @@ class Monokulo extends \Opencart\System\Engine\Controller {
 				'url'       => $store['url'],
 				'host'      => $host,
 				'connected' => $connection ? sprintf($this->language->get('text_connected_as'), $connection->publicKey, date($this->language->get('datetime_format'), $connection->connectedAt)) : '',
-				'reconnect' => $connection && $connection->needsReconnect(),
 				'connect'   => $this->url->link('extension/monokulo/payment/monokulo.connect', $token . '&store_id=' . $store['store_id'])
 			];
 		}
@@ -190,7 +189,7 @@ class Monokulo extends \Opencart\System\Engine\Controller {
 		(new Repository($this->db, DB_PREFIX))->install();
 
 		$settings = [
-			'payment_monokulo_address'        => '',
+			'payment_monokulo_address'        => 'https://monokulo.com',
 			'payment_monokulo_geo_zone_id'    => 0,
 			'payment_monokulo_forward_errors' => '0',
 			'payment_monokulo_status'         => '0',

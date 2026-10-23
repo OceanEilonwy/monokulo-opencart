@@ -1,4 +1,6 @@
 <?php
+declare(strict_types=1);
+
 namespace Monokulo\OpenCart;
 
 /**
@@ -37,7 +39,6 @@ final class Repository {
 				`public_key` VARCHAR(128) NOT NULL,
 				`secret_token` VARCHAR(255) NOT NULL,
 				`webhook_secret` VARCHAR(255) NOT NULL,
-				`connection_version` VARCHAR(16) NOT NULL,
 				`connected_at` INT(11) NOT NULL,
 				PRIMARY KEY (`host`)
 			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci",
@@ -89,7 +90,6 @@ final class Repository {
 			$row['public_key'],
 			$row['secret_token'],
 			$row['webhook_secret'],
-			$row['connection_version'],
 			(int)$row['connected_at'],
 		);
 	}
@@ -97,8 +97,8 @@ final class Repository {
 	public function saveConnection(Connection $c): void {
 		$e = fn(string $v): string => "'" . $this->db->escape($v) . "'";
 		$this->db->query(
-			"REPLACE INTO `{$this->prefix}monokulo_connection` (`host`, `endpoint`, `public_key`, `secret_token`, `webhook_secret`, `connection_version`, `connected_at`) VALUES ("
-			. implode(', ', [$e($c->host), $e($c->endpoint), $e($c->publicKey), $e($c->secretToken), $e($c->webhookSecret), $e($c->version), (int)$c->connectedAt])
+			"REPLACE INTO `{$this->prefix}monokulo_connection` (`host`, `endpoint`, `public_key`, `secret_token`, `webhook_secret`, `connected_at`) VALUES ("
+			. implode(', ', [$e($c->host), $e($c->endpoint), $e($c->publicKey), $e($c->secretToken), $e($c->webhookSecret), (int)$c->connectedAt])
 			. ')'
 		);
 	}
