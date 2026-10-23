@@ -20,7 +20,7 @@ use PHPUnit\Framework\TestCase;
  * 4. a guest buys something with Monero: the shop creates the Monokulo
  *    order through the API and sends them to its checkout page, which
  *    loads; the order, read back through the API with the store's key, is
- *    pending, and the shop kept its dashboard page;
+ *    pending, and its dashboard page opens for the merchant;
  * 5. a guest on the shop's onion address buys too, and is sent to the
  *    order's checkout on Monokulo's onion address (the smoke Monokulo has
  *    one, docker/monokulo-smoke.toml), with the entry kept from the first
@@ -28,7 +28,9 @@ use PHPUnit\Framework\TestCase;
  *
  * Nothing is paid. Monokulo's pages are filled in by their fields' names.
  * Along the way, what the real Monokulo answers is compared with what the
- * stand-in the other suites use answers.
+ * stand-in the other suites use answers, and the stand-in with the examples
+ * in the OpenAPI document written at the pinned commit
+ * (MONOKULO_OPENAPI_FILE, which scripts/smoke passes on).
  */
 final class MonokuloSmokeTest extends TestCase {
 	/** A mainnet watch-only wallet: a fixed view key and its public spend key, for tests only. */
@@ -69,10 +71,8 @@ final class MonokuloSmokeTest extends TestCase {
 		$this->assertSame('/checkout/' . $order['order_id'], $order['_links']['mk:checkout']['href']);
 		$this->theOrderIsTheStandIns($order);
 
-		// The shop kept the order's page on the merchant's dashboard, for its notes' "In Monokulo" link: the merchant, signed in, opens it.
-		$kept = Shop::rows("SELECT dashboard_url FROM oc_monokulo_order WHERE monokulo_order_id = " . Shop::quote($order['order_id']))[0]['dashboard_url'];
-		$this->assertSame($this->monokulo . $order['_links']['mk:dashboard-order']['href'], $kept);
-		$dashboard = $this->browser->get($kept);
+		// The order's page on the merchant's dashboard (which its webhooks link, for the notes' "In Monokulo" link): the merchant, signed in, opens it.
+		$dashboard = $this->browser->get($this->monokulo . $order['_links']['mk:dashboard-order']['href']);
 		$this->assertSame(200, $dashboard->status);
 		$this->assertStringContainsString($order['order_id'], $dashboard->body);
 
@@ -113,9 +113,10 @@ final class MonokuloSmokeTest extends TestCase {
 		$this->assertSame([], $missing($keys(FakeMonokulo::connected(onion: true)), $keys($connection['properties'])), 'the stand-in\'s handshake has no field Monokulo lacks');
 		$this->assertSame([], $missing($connection['required'], $keys(FakeMonokulo::connected())), 'and every required one');
 		$problems = implode(' ', array_column($finish['responses'], 'description'));
-		foreach (['invalid-connect-code', 'no-public-address', 'rate-limited', 'challenge-required', 'internal'] as $problem) {
+		foreach (['invalid-connect-code', 'no-public-address', 'rate-limited', 'internal'] as $problem) {
 			$this->assertStringContainsString('problems/' . $problem . ')', $problems);
 		}
+		$this->assertStringNotContainsString('challenge-required', $problems, 'the handshake is never challenged');
 
 		// The order form takes every field the shop sends.
 		$create = $openapi['paths']['/api/v1/orders']['post'];
@@ -147,6 +148,68 @@ final class MonokuloSmokeTest extends TestCase {
 		}
 		$logs = $openapi['paths']['/api/v1/logs']['post'];
 		$this->assertSame(['send-logs', ['sk']], [$logs['x-hal-forms-template'], $logs['x-monokulo-keys']], 'where the shop forwards its errors, with its key');
+	}
+
+	/**
+	 * The stand-in answers as the examples recorded in the OpenAPI document
+	 * written at the pinned commit (`cargo xtask api openapi`): the entry
+	 * as the secret key sees it (`sk`, `sk-with-onion`), an order made
+	 * with that key, the handshake's answer (`no-key`,
+	 * `no-key-with-onion`), and the handshake's problems the plugin tells
+	 * apart. Each stand-in answer is compared with its own example, on a
+	 * Monokulo without an onion address and on one with.
+	 */
+	public function test_the_stand_in_matches_monokulos_examples(): void {
+		$file = getenv('MONOKULO_OPENAPI_FILE');
+		$this->assertNotEmpty($file, 'scripts/smoke passes MONOKULO_OPENAPI on as MONOKULO_OPENAPI_FILE');
+		$openapi = json_decode((string)file_get_contents($file), true, flags: JSON_THROW_ON_ERROR);
+		$examples = static function (array $operation, string $status, string $type): array {
+			return array_map(static fn(array $e): array => $e['value'], $operation['responses'][$status]['content'][$type]['examples']);
+		};
+		$hrefs = static function (array $links): array {
+			$out = [];
+			foreach ($links as $rel => $link) {
+				$out[$rel] = $rel === 'curies' ? array_map(static function (array $curie): array {
+					ksort($curie);
+
+					return $curie;
+				}, $link) : $link['href'];
+			}
+			ksort($out);
+
+			return $out;
+		};
+
+		$entries = $examples($openapi['paths']['/api/v1']['get'], '200', 'application/prs.hal-forms+json');
+		foreach (['sk' => false, 'sk-with-onion' => true] as $name => $onion) {
+			$standIn = FakeMonokulo::entry(onion: $onion);
+			$this->assertSame($hrefs($standIn['_links']), $hrefs($entries[$name]['_links']), $name);
+			$this->assertEqualsCanonicalizing(array_keys($standIn['_templates']), array_keys($entries[$name]['_templates']), $name);
+			foreach ($standIn['_templates'] as $form => $template) {
+				$this->assertSame([$template['method'], $template['target'], $template['contentType']], [$entries[$name]['_templates'][$form]['method'], $entries[$name]['_templates'][$form]['target'], $entries[$name]['_templates'][$form]['contentType']], $name . ' ' . $form);
+			}
+		}
+
+		$orders = $examples($openapi['paths']['/api/v1/orders']['post'], '201', 'application/prs.hal-forms+json');
+		foreach (['sk' => false, 'sk-with-onion' => true] as $name => $onion) {
+			$example = $orders[$name];
+			$storeId = explode('/', $example['_links']['mk:dashboard-order']['href'])[2];
+			$standIn = FakeMonokulo::order($example['order_id'], onion: $onion);
+			$this->assertEqualsCanonicalizing(array_keys($standIn), array_keys($example), $name);
+			$this->assertSame($hrefs(json_decode(str_replace(FakeMonokulo::STORE_ID, $storeId, (string)json_encode($standIn['_links'])), true)), $hrefs($example['_links']), $name);
+		}
+
+		$finish = $openapi['paths']['/plugins/connect/{slug}/finish']['post'];
+		$connections = $examples($finish, '200', 'application/json');
+		foreach (['no-key' => false, 'no-key-with-onion' => true] as $name => $onion) {
+			$standIn = FakeMonokulo::connected(onion: $onion);
+			$this->assertEqualsCanonicalizing(array_keys($standIn), array_keys($connections[$name]), $name);
+			$this->assertSame([$standIn['api'], $standIn['onion_api'] ?? null], [$connections[$name]['api'], $connections[$name]['onion_api'] ?? null], $name);
+		}
+		foreach (['401' => 'invalid-connect-code', '429' => 'rate-limited', '500' => 'internal', '503' => 'no-public-address'] as $status => $problem) {
+			$types = array_column($examples($finish, (string)$status, 'application/problem+json'), 'type');
+			$this->assertContains('https://docs.monokulo.com/problems/' . $problem, $types, (string)$status);
+		}
 	}
 
 	/**

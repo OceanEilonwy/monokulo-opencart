@@ -132,6 +132,7 @@ final class FakeMonokulo {
 			'confirmations_required'   => 10,
 			'created_at'               => 1,
 			'expires_at'               => 2,
+			'cancelled_at'             => null,
 			'_links'                   => $links,
 		];
 	}
