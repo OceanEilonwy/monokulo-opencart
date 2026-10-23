@@ -22,8 +22,10 @@ $_['note_overpaid']              = 'Monokulo: paid, with more than the amount du
 $_['note_expired']               = 'Monokulo: the payment window closed without full payment. Any funds received stay at the payment address; refund them yourself if needed.';
 $_['note_double_spend_detected'] = 'Monokulo: FRAUD ALERT. A payment to this order was double-spent and no longer counts (transaction %s). If this changed the order status, that is a separate entry. Check this order before sending anything.';
 $_['note_double_spend_reversed'] = 'Monokulo: the earlier double-spend alert for this order (transaction %s) was wrong and is withdrawn. If this changed the order status, that is a separate entry.';
-$_['note_superseded']            = 'Monokulo: an older payment request for this order was paid, after the order total changed. Check the amount received before treating this order as paid.';
+$_['note_earlier_request']       = 'This is about an earlier payment request for this order, not its newest: the order total may have changed since, so check the amount.';
 $_['note_kept_paid']             = 'The order was already paid, so its status is left as it is: check it before doing anything else.';
+$_['note_paid_again']            = 'The order was already paid, so this is more money than it needed: refund it from your wallet if needed.';
+$_['note_not_current']           = 'The order\'s newest payment request decides its status, so it is left as it is.';
 $_['note_unknown_transaction']   = 'unknown';
 
 // Error

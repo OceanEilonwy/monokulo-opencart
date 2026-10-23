@@ -127,6 +127,24 @@ final class CheckoutTest extends ShopTestCase {
 		}
 	}
 
+	/**
+	 * The amount goes in the currency's own decimal places, without
+	 * trailing zeros: never padded, which Monokulo may refuse.
+	 */
+	public function test_the_amount_has_the_currencys_places_and_no_trailing_zeros(): void {
+		$this->connect();
+		$this->monokuloAnswers(201, FakeMonokulo::order('ord_1'));
+		$this->confirm($this->order(20.0, 'USD'));
+		$this->db()->query("UPDATE `" . DB_PREFIX . "currency` SET `decimal_place` = '0' WHERE `code` = 'EUR'");
+		foreach (glob(DIR_CACHE . 'cache.*') ?: [] as $file) {
+			@unlink($file);
+		}
+		$this->confirm($this->order(100.0, 'EUR'));
+
+		$amounts = array_map(static fn(array $r): string => json_decode($r['body'], true)['amount'], $this->orderRequests());
+		$this->assertSame(['20', '89'], $amounts);
+	}
+
 	/** A product name with characters OpenCart stores escaped goes to Monokulo as the customer typed it. */
 	public function test_product_names_are_sent_unescaped(): void {
 		$this->connect();

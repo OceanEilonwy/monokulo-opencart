@@ -60,11 +60,12 @@ and the payment's progress. The payment link is also in the order
 confirmation email and on the order in the customer's account, so they can
 come back to it.
 
-The shop asks Monokulo for the order total in the customer's currency;
-Monokulo converts it to XMR at its own exchange rate. The currency must be
-one your Monokulo prices (or XMR itself): otherwise the customer is asked
-to choose another currency or payment method, and the shop's log says why
-(Monokulo's own explanation of the problem).
+The shop asks Monokulo for the order total in the customer's currency, in
+that currency's own decimal places (as set in OpenCart) without trailing
+zeros; Monokulo converts it to XMR at its own exchange rate. The currency
+must be one your Monokulo prices (or XMR itself): otherwise the customer is
+asked to choose another currency or payment method, and the shop's log
+says why (Monokulo's own explanation of the problem).
 
 ## Order statuses
 
@@ -86,11 +87,18 @@ statuses**; the defaults:
 | `order.double_spend_reversed` | That alert was wrong | unchanged | Note |
 
 Notes are for the merchant; only "Order placed" and "Paid" are shown to the
-customer. If an order's total changed after a first payment request and the
-older request is paid, the order isn't marked paid: a note asks you to
-check the amount. A paid order stays paid: a later event (expired, part
-paid) only adds a note. Paid means the **Paid** status, or one of
-OpenCart's complete statuses (Complete, Shipped by default).
+customer. A paid order never goes back: a later event (expired, part paid)
+only adds a note, and so does more money arriving (an overpayment, or a
+second payment request paid too), for you to refund. Paid means the
+**Paid** status, or one of OpenCart's complete statuses (Complete, Shipped
+by default).
+
+An order can have more than one payment request: when its total changed
+after the customer was first sent to pay, the shop asks Monokulo for a new
+one. The extension remembers them all. A payment on any of them marks the
+order paid (with a note to check the amount, if it was an earlier one);
+anything else about an earlier one (expired, part paid) is only a note,
+since the newest one decides the status.
 
 ### Refunds
 

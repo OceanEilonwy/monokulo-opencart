@@ -36,14 +36,15 @@ final class OrderRequest {
 	}
 
 	/**
-	 * The total as a decimal string, with the currency's decimal places (at
-	 * least 2; XMR up to 12).
+	 * The total as a plain decimal string in the currency's own decimal
+	 * places (2 for EUR, 0 for JPY; XMR up to 12), without trailing zeros:
+	 * `12.5`, `1000`. Never padded: Monokulo may refuse more places than a
+	 * currency has, even zeros.
 	 */
 	public static function amount(float $total, string $currency, int $decimals): string {
-		$max = strtoupper($currency) === 'XMR' ? 12 : 8;
-		$decimals = max(2, min($max, $decimals));
+		$amount = number_format($total, max(0, min(12, $decimals)), '.', '');
 
-		return number_format($total, $decimals, '.', '');
+		return str_contains($amount, '.') ? rtrim(rtrim($amount, '0'), '.') : $amount;
 	}
 
 	/**

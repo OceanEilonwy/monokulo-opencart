@@ -10,12 +10,12 @@ final class OrderRequestTest extends TestCase {
 		$body = OrderRequest::body(0, 1042, 12.5, 'eur', 2, ['Blue mug', 'Tea', 'Spoon'], 'Order #1042', ' + %d more');
 
 		$this->assertSame([
-			'amount'                 => '12.50',
+			'amount'                 => '12.5',
 			'currency'               => 'EUR',
 			'merchant_order_id'      => '1042',
 			'show_merchant_order_id' => false,
 			'description'            => 'Order #1042: Blue mug + 2 more',
-			'idempotency_key'        => 'oc:0:1042:12.50:EUR',
+			'idempotency_key'        => 'oc:0:1042:12.5:EUR',
 		], $body);
 	}
 
@@ -31,13 +31,19 @@ final class OrderRequestTest extends TestCase {
 
 	public static function amounts(): array {
 		return [
-			'two decimals'           => [12.5, 'EUR', 2, '12.50'],
+			'two decimals'           => [12.25, 'EUR', 2, '12.25'],
+			'trailing zero trimmed'  => [12.5, 'EUR', 2, '12.5'],
+			'whole amount'           => [10.0, 'EUR', 2, '10'],
 			'rounded'                => [12.345, 'USD', 2, '12.35'],
-			'no decimals currency'   => [1000.0, 'JPY', 0, '1000.00'],
+			'rounded up to whole'    => [9.999, 'USD', 2, '10'],
+			'no decimals currency'   => [1000.0, 'JPY', 0, '1000'],
+			'JPY rounds to whole'    => [1234.6, 'JPY', 0, '1235'],
+			'three decimals'         => [1.2345, 'KWD', 3, '1.235'],
 			'XMR keeps its places'   => [0.123456789012, 'XMR', 12, '0.123456789012'],
-			'XMR capped at 12'       => [1.5, 'xmr', 15, '1.500000000000'],
-			'fiat capped at 8'       => [1.5, 'BTC', 12, '1.50000000'],
-			'no thousands separator' => [1234567.0, 'EUR', 2, '1234567.00'],
+			'XMR capped at 12'       => [1.5, 'xmr', 15, '1.5'],
+			'never padded to 8'      => [1.5, 'EUR', 8, '1.5'],
+			'negative places'        => [3.0, 'EUR', -1, '3'],
+			'no thousands separator' => [1234567.0, 'EUR', 2, '1234567'],
 		];
 	}
 
