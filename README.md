@@ -80,7 +80,9 @@ statuses**; the defaults:
 Notes are for the merchant; only "Order placed" and "Paid" are shown to the
 customer. If an order's total changed after a first payment request and the
 older request is paid, the order isn't marked paid: a note asks you to
-check the amount.
+check the amount. A paid order stays paid: a later event (expired, part
+paid) only adds a note. Paid means the **Paid** status, or one of
+OpenCart's complete statuses (Complete, Shipped by default).
 
 ### Refunds
 

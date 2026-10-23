@@ -134,6 +134,17 @@ class Monokulo extends \Opencart\System\Engine\Model {
 					throw new \RuntimeException('no order status is set for "' . $decision->status . '"');
 				}
 
+				// A paid order stays paid: a later event (expired, partial) only
+				// adds a note. Paid means the merchant's Paid status, or one of
+				// OpenCart's complete statuses (the merchant moved it on).
+				$paid = array_map('intval', array_merge([(int)$config->get('payment_monokulo_paid_status_id')], (array)$config->get('config_complete_status')));
+
+				if (!$decision->paid && in_array($current, $paid, true)) {
+					$orders->addHistory($orderId, $current, $note . ' ' . $language->get('note_kept_paid') . $link);
+
+					return;
+				}
+
 				if ($decision->notify) {
 					$orders->addHistory($orderId, $status, $language->get('note_paid_customer'), true);
 				}
