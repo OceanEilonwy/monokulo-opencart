@@ -5,8 +5,9 @@ namespace Monokulo\OpenCart;
 
 /**
  * The calls the shop's server makes to Monokulo: redeem a connect token,
- * make an order through the API (`/api/v1`, HAL-FORMS), and (when the
- * merchant turned it on) forward its warnings and errors.
+ * make an order through the API (`/api/v1`, HAL-FORMS), have Monokulo send
+ * the shop a test webhook, and (when the merchant turned it on) forward
+ * its warnings and errors.
  *
  * Only the API's entry is stored; every other address is a link or a form
  * from there, resolved against the entry's URL. The entry itself is kept
@@ -128,6 +129,41 @@ final class Client {
 	}
 
 	/**
+	 * The entry's `send-test-webhook` form, with `{}`: Monokulo sends the
+	 * webhook this shop registered when it connected a signed
+	 * `webhook.test` now, and answers once the shop's receiver has. A `200`
+	 * whatever the receiver said: `delivered` is whether it answered `2xx`;
+	 * `status` is what it answered (null when nothing did), `error` why it
+	 * wasn't delivered, and `next_attempt_at` when Monokulo tries it again
+	 * (null once delivered, or when it won't). A problem (`rate-limited`,
+	 * `not-found`) is an ApiError.
+	 *
+	 * @return array{webhook_id: string, event_id: string, delivered: bool, status: ?int, duration_ms: int, error: ?string, next_attempt_at: ?int}
+	 *
+	 * @throws ApiError|TransportError
+	 */
+	public function sendTestWebhook(Connection $connection): array {
+		// Monokulo answers once the receiver has (within its delivery timeout, 5 s unless changed).
+		[$response] = $this->submit($connection, 'send-test-webhook', new \stdClass(), 30);
+		$answer = $this->decode($response, 200);
+		$text = static fn(string $key): ?string => isset($answer[$key]) && is_string($answer[$key]) && $answer[$key] !== '' ? $answer[$key] : null;
+		$int = static fn(string $key): ?int => isset($answer[$key]) && is_int($answer[$key]) ? $answer[$key] : null;
+		if ($text('event_id') === null || !isset($answer['delivered']) || !is_bool($answer['delivered'])) {
+			throw new ApiError($response->status, 'not a test webhook\'s outcome: ' . $response->body);
+		}
+
+		return [
+			'webhook_id'      => $text('webhook_id') ?? '',
+			'event_id'        => $text('event_id'),
+			'delivered'       => $answer['delivered'],
+			'status'          => $int('status'),
+			'duration_ms'     => $int('duration_ms') ?? 0,
+			'error'           => $text('error'),
+			'next_attempt_at' => $int('next_attempt_at'),
+		];
+	}
+
+	/**
 	 * The entry's `send-logs` form: the shop's warnings and errors, for the
 	 * merchant to read in Monokulo. Best effort: a failure here (the
 	 * store's client logs are off, Monokulo is down) drops the reports and
@@ -160,13 +196,13 @@ final class Client {
 	 * `401`, `404` or `405` to one, has the entry read again and the form
 	 * sent once more.
 	 *
-	 * @param array<string, mixed> $body
+	 * @param array<string, mixed>|\stdClass $body (`{}` as an empty stdClass)
 	 *
 	 * @return array{0: HttpResponse, 1: string}
 	 *
 	 * @throws ApiError|TransportError
 	 */
-	private function submit(Connection $connection, string $name, array $body, int $timeoutSeconds): array {
+	private function submit(Connection $connection, string $name, array|\stdClass $body, int $timeoutSeconds): array {
 		[$entry, $fresh] = $this->entry($connection, self::KEPT, $timeoutSeconds);
 		while (true) {
 			$form = $entry->form($name);

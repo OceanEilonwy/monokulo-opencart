@@ -90,8 +90,49 @@ final class FakeMonokulo {
 			'_templates' => [
 				'create-order' => ['method' => 'POST', 'target' => $prefix . '/api/v1/orders', 'contentType' => 'application/json', 'properties' => []],
 				'send-logs'    => ['method' => 'POST', 'target' => $prefix . '/api/v1/logs', 'contentType' => 'application/json', 'properties' => []],
+				'send-test-webhook' => ['method' => 'POST', 'target' => $prefix . '/api/v1/webhook-tests', 'contentType' => 'application/json', 'properties' => []],
 			],
 		];
+	}
+
+	/**
+	 * How a test webhook went, as `POST {prefix}/api/v1/webhook-tests`
+	 * answers: delivered, the example recorded in Monokulo's OpenAPI
+	 * document (`sk`); not delivered, the same with the fields Monokulo's
+	 * schema has for it, as its docs show them (the document records no
+	 * example of one): the receiver answered 500, and Monokulo tries again.
+	 *
+	 * @return array<string, mixed>
+	 */
+	public static function testOutcome(bool $delivered = true, string $prefix = '', string $eventId = 'evt_0000000000000002'): array {
+		$outcome = [
+			'webhook_id'  => 'wh_00000000000000000000000000000001',
+			'event_id'    => $eventId,
+			'delivered'   => true,
+			'status'      => 200,
+			'duration_ms' => 12,
+			'response'    => "HTTP/1.1 200 OK\ncontent-type: text/plain; charset=utf-8\n\nok",
+		];
+		if (!$delivered) {
+			$outcome = ['delivered' => false, 'status' => 500, 'error' => 'answered 500', 'duration_ms' => 31, 'response' => "HTTP/1.1 500 Internal Server Error\ncontent-type: text/plain\n\nboom", 'next_attempt_at' => self::NEXT_ATTEMPT] + $outcome;
+		}
+
+		return $outcome + [
+			'_links'     => [
+				'curies'   => [['href' => 'https://docs.monokulo.com/rels/{rel}', 'name' => 'mk', 'templated' => true]],
+				'mk:store' => ['href' => $prefix . '/api/v1/store', 'title' => 'The store the key belongs to, and where its payments go.'],
+				'self'     => ['href' => $prefix . '/api/v1/webhook-tests'],
+			],
+			'_templates' => ['send-test-webhook' => self::entry($prefix)['_templates']['send-test-webhook']],
+		];
+	}
+
+	/** When the stand-in's undelivered test webhook is tried again. */
+	public const NEXT_ATTEMPT = 1760020452;
+
+	/** Makes `POST {prefix}/api/v1/webhook-tests` answer as testOutcome() says. */
+	public function sendsTestWebhook(bool $delivered = true, string $prefix = '', string $eventId = 'evt_0000000000000002'): void {
+		$this->respond('POST', $prefix . '/api/v1/webhook-tests', 200, self::testOutcome($delivered, $prefix, $eventId), headers: ['Content-Type' => 'application/prs.hal-forms+json']);
 	}
 
 	/** Makes `POST {prefix}/api/v1/orders` answer 201 with order `orderId`, as Monokulo does. */
@@ -184,6 +225,13 @@ final class FakeMonokulo {
 			'too-large'              => ['detail' => 'Failed to buffer the request body: length limit exceeded', 'status' => 413, 'title' => 'Request too large', 'type' => 'https://docs.monokulo.com/problems/too-large'],
 			'unsupported-media-type' => ['detail' => 'Expected request with `Content-Type: application/json`', 'status' => 415, 'title' => 'Send JSON', 'type' => 'https://docs.monokulo.com/problems/unsupported-media-type'],
 			'rate-limited'           => ['detail' => 'Rate limit exceeded; retry in 120 s.', 'retry_after' => 120, 'status' => 429, 'title' => 'Too many requests', 'type' => 'https://docs.monokulo.com/problems/rate-limited'],
+		],
+		'POST /api/v1/webhook-tests' => [
+			'unauthorized' => ['detail' => 'This key was not accepted. Check it, or connect the store or app again.', 'status' => 401, 'title' => 'No valid key', 'type' => 'https://docs.monokulo.com/problems/unauthorized'],
+			'forbidden'    => ['detail' => 'A pk key may not do this. It takes sk.', 'status' => 403, 'title' => 'Not allowed with this key', 'type' => 'https://docs.monokulo.com/problems/forbidden'],
+			'not-found'    => ['detail' => 'There\'s no such webhook for this store. Name one of its webhooks in `webhook_id`, or connect the plugin again with a `webhook_url`.', 'status' => 404, 'title' => 'Not found', 'type' => 'https://docs.monokulo.com/problems/not-found'],
+			'rate-limited' => ['detail' => 'Rate limit exceeded; retry in 120 s.', 'retry_after' => 120, 'status' => 429, 'title' => 'Too many requests', 'type' => 'https://docs.monokulo.com/problems/rate-limited'],
+			'internal'     => ['detail' => 'Something went wrong on this Monokulo. Try again in a moment.', 'status' => 500, 'title' => 'Internal error', 'type' => 'https://docs.monokulo.com/problems/internal'],
 		],
 		'POST /plugins/connect/{slug}/finish' => [
 			'invalid-request'        => ['detail' => 'A webhook URL must start with http:// or https://.', 'status' => 400, 'title' => 'Invalid request', 'type' => 'https://docs.monokulo.com/problems/invalid-request'],

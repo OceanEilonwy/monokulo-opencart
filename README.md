@@ -149,8 +149,31 @@ Connecting registers the store's webhook address with Monokulo:
 Each delivery is signed (`X-Monokulo-Signature`); the extension refuses a
 missing or wrong signature and one more than five minutes old. Monokulo
 retries a delivery the shop didn't take; a delivery seen before changes
-nothing. Deliveries and their answers are listed in Monokulo, in the store's
+nothing. An event this version doesn't know is answered `200` and changes
+nothing (an error answer would show as a failed delivery and be retried).
+Deliveries and their answers are listed in Monokulo, in the store's
 settings under *Webhooks*.
+
+### Test connection
+
+Each connected store on the settings page has a **Test connection** button
+and a line saying when its **last test webhook** arrived (its time and
+event id), or that none has yet. The button has Monokulo (through the API
+entry's `send-test-webhook` form, with the store's secret key) send the
+shop's webhook a signed `webhook.test` now, and says how it went:
+
+- delivered: the shop checked the signature and answered, with the HTTP
+  status and how long it took;
+- answered, but not by this shop: the webhook in Monokulo points somewhere
+  else (connect again);
+- not delivered: why (Monokulo's words: `answered 500`, `timed out`, …)
+  and when Monokulo tries it again;
+- Monokulo refused: it sends at most 6 test webhooks a minute for a store
+  (the message says how long to wait), it has no webhook for the store
+  (connect again), or the key was refused.
+
+A test webhook changes no order. One sent from Monokulo's own store
+settings (*Send a test webhook*) shows on the last-received line too.
 
 ## Logs
 
@@ -166,7 +189,7 @@ Connected stores keep working without connecting again: the extension adds
 what it now keeps to its tables (on install, or the first time it reads a
 connection from before). Until a store connects again it has no onion
 entry kept, which changes nothing for customers (each order carries its own
-onion checkout). The "In Monokulo" link in an order's notes comes with each
+onion checkout), and no test webhook received. The "In Monokulo" link in an order's notes comes with each
 webhook, so orders made before the upgrade have it too; a pre-release
 build's per-order copy of that link (`dashboard_url`) is dropped the first
 time a webhook finds it.
@@ -206,7 +229,13 @@ Admin: `http://localhost:8090/admin/`, user `admin`, password
   connect, then a guest checkout lands on the Monokulo checkout page, the
   order, read back through the API, is pending, and its dashboard page
   opens; a guest on the shop's onion address is sent to the onion checkout.
-  Nothing is paid. It also checks the stand-in Monokulo the other suites
+  Before that, a test webhook end to end: the shop's key sends the entry's
+  `send-test-webhook` form, Monokulo delivers a signed `webhook.test` to the
+  shop and answers `delivered` with a `2xx`, the shop's receiver kept that
+  same event id, no order changed, and the settings page shows it as the
+  last received; then the settings page's **Test connection** button is
+  pressed and says it was delivered (two tests, under Monokulo's 6 a
+  minute). Nothing is paid. It also checks the stand-in Monokulo the other suites
   use against the real one's answers, its OpenAPI document, and the
   examples recorded in that document as written at the pinned commit
   (`MONOKULO_OPENAPI`, from `cargo xtask api openapi --out FILE` in a

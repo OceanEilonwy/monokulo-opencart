@@ -10,11 +10,15 @@ namespace Monokulo\OpenCart;
  *
  * - 401: no connection for this shop host, or the signature doesn't check
  *   out (wrong secret, changed body, more than five minutes off).
- * - 400: correctly signed, but not a webhook envelope.
+ * - 400: correctly signed, but not a webhook envelope (or an order's event
+ *   with no order in it).
  * - 404: no order here for that Monokulo order (retried, in case the order
  *   is still being saved).
- * - 200: applied, or already applied before (a repeat changes nothing),
- *   or an event this version doesn't know (accepted and logged).
+ * - 200: applied, or already applied before (a repeat changes nothing);
+ *   a `webhook.test` (kept on the connection as the last test webhook
+ *   received, for the settings page; no order changes); or an event this
+ *   version doesn't know (accepted and logged, whatever order it names: a
+ *   4xx would show as a failed delivery and be retried).
  * - 500: applying it failed; the event is given back so the retry applies it.
  */
 final class WebhookReceiver {
@@ -37,17 +41,28 @@ final class WebhookReceiver {
 
 			return 400;
 		}
-		$order = $this->repository->findOrder($event->orderId);
-		if (!$order) {
-			$this->log->warning(sprintf('Webhook %s for Monokulo order %s: no such order in this shop.', $event->eventId, $event->orderId));
+		if ($event->event === WebhookEvent::TEST) {
+			$this->repository->recordTestWebhook($connection->host, $event->eventId, $now);
+			$this->log->info(sprintf('Test webhook %s received: its signature checks out. No order changed.', $event->eventId));
 
-			return 404;
+			return 200;
 		}
 		$decision = StatusPolicy::decide($event);
 		if (!$decision) {
 			$this->log->warning(sprintf('Webhook %s: unknown event "%s", accepted and ignored.', $event->eventId, $event->event));
 
 			return 200;
+		}
+		if ($event->orderId === '') {
+			$this->log->error(sprintf('Webhook %s refused: a %s event with no order_id: %s', $event->eventId, $event->event, $body));
+
+			return 400;
+		}
+		$order = $this->repository->findOrder($event->orderId);
+		if (!$order) {
+			$this->log->warning(sprintf('Webhook %s for Monokulo order %s: no such order in this shop.', $event->eventId, $event->orderId));
+
+			return 404;
 		}
 		if (!$this->repository->claimEvent($event->eventId, $event->orderId, $now)) {
 			return 200;

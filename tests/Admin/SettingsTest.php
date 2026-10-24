@@ -4,6 +4,7 @@ namespace Monokulo\OpenCart\Tests\Admin;
 use Monokulo\OpenCart\Connection;
 use Monokulo\OpenCart\Tests\Support\FakeMonokulo;
 use Monokulo\OpenCart\Tests\Support\OpenCart;
+use Monokulo\OpenCart\Tests\Support\Shop;
 use Monokulo\OpenCart\Tests\Support\ShopTestCase;
 
 /**
@@ -124,6 +125,71 @@ final class SettingsTest extends ShopTestCase {
 		$connect = $this->admin(self::PAGE . '.connect', ['store_id' => '0'], [], $viewer);
 		$this->assertStringEndsWith('monokulo_connect_error=permission', OpenCart::location($connect));
 		$this->assertSame([], $this->rows("SELECT * FROM `" . DB_PREFIX . "monokulo_connect_nonce`"));
+
+		$this->connect(self::HOST);
+		$test = json_decode($this->admin(self::PAGE . '.testWebhook', ['store_id' => '0'], [], $viewer)['output'], true);
+		$this->assertSame('Warning: you do not have permission to change the Monokulo settings.', $test['error']['warning']);
+		$this->assertSame([], self::$monokulo->requests(), 'nothing sent');
+	}
+
+	/** Each connected store says when its last test webhook arrived, and has a Test connection button; one not connected has neither. */
+	public function test_the_page_shows_the_last_test_webhook_and_a_test_button(): void {
+		$storeId = $this->addSecondStore();
+		$this->connect(self::HOST);
+
+		$html = $this->admin(self::PAGE)['output'];
+		$this->assertStringContainsString('No test webhook received yet.', $html);
+		$this->assertSame(1, substr_count($html, '>Test connection</button>'), 'only the connected store has one');
+		$this->assertMatchesRegularExpression('#<form action="[^"]*route=extension/monokulo/payment/monokulo\.testWebhook&amp;user_token=' . self::TOKEN . '&amp;store_id=0" method="post" data-oc-toggle="ajax"#', $html);
+		$this->assertStringNotContainsString('testWebhook&amp;user_token=' . self::TOKEN . '&amp;store_id=' . $storeId . '"', $html);
+
+		$this->repository()->recordTestWebhook(self::HOST, 'evt_0000000000000012', 1760020380);
+		$this->assertStringContainsString('Last test webhook received: ' . date('d/m/Y H:i:s', 1760020380) . ' (evt_0000000000000012)', $this->admin(self::PAGE)['output']);
+	}
+
+	/** @return array<string, string> the Test connection button's answer for the default store */
+	private function testConnection(): array {
+		return json_decode($this->admin(self::PAGE . '.testWebhook', ['store_id' => '0'])['output'], true);
+	}
+
+	/** Monokulo delivered the test, and this shop's receiver kept that event (as it does while Monokulo waits): a success. */
+	public function test_testing_a_delivered_webhook_is_a_success(): void {
+		$this->connect(self::HOST);
+		self::$monokulo->serveEntry();
+		self::$monokulo->sendsTestWebhook();
+		$this->repository()->recordTestWebhook(self::HOST, 'evt_0000000000000002', time());
+
+		$this->assertSame(['success' => 'Test webhook evt_0000000000000002 delivered: this shop checked its signature and answered HTTP 200 in 12 ms. No order changed.'], $this->testConnection());
+		$this->assertSame(['GET /api/v1', 'POST /api/v1/webhook-tests'], array_map(static fn(array $r): string => $r['method'] . ' ' . $r['path'], self::$monokulo->requests()), 'through the entry\'s form');
+		$this->assertSame('{}', self::$monokulo->requests()[1]['body']);
+	}
+
+	public function test_testing_an_undelivered_webhook_says_why_and_when_it_is_tried_again(): void {
+		$this->connect(self::HOST);
+		self::$monokulo->serveEntry();
+		self::$monokulo->sendsTestWebhook(delivered: false);
+
+		$answer = $this->testConnection();
+
+		$this->assertSame('Monokulo\'s test webhook evt_0000000000000002 was not delivered: answered 500. Monokulo tries it again at ' . date('d/m/Y H:i:s', FakeMonokulo::NEXT_ATTEMPT) . '.', $answer['error']['warning']);
+		$this->assertStringContainsString('Test connection: Monokulo\'s test webhook evt_0000000000000002 was not delivered', Shop::log());
+	}
+
+	/** Monokulo's problems, as recorded: how long to wait when rate limited, connect again when it has no webhook. */
+	public function test_testing_says_what_monokulo_refused(): void {
+		$this->connect(self::HOST);
+		self::$monokulo->serveEntry();
+
+		self::$monokulo->answersWith('POST /api/v1/webhook-tests', 'rate-limited');
+		$this->assertSame('Monokulo sends at most 6 test webhooks a minute for a store. Try again in 120 seconds.', $this->testConnection()['error']['warning']);
+
+		self::$monokulo->answersWith('POST /api/v1/webhook-tests', 'not-found');
+		$this->assertStringStartsWith('Monokulo has no webhook for this store to test.', $this->testConnection()['error']['warning']);
+	}
+
+	public function test_testing_a_store_that_is_not_connected(): void {
+		$this->assertSame('Connect this store before testing its connection.', $this->testConnection()['error']['warning']);
+		$this->assertSame([], self::$monokulo->requests());
 	}
 
 	/**

@@ -526,4 +526,70 @@ final class ClientTest extends TestCase {
 		$dead = new Connection('shop.example', 'http://127.0.0.1:' . FakeMonokulo::freePort() . '/api/v1', 'pk', 'sk', 'wh', 1);
 		$this->assertStringStartsWith('Could not send 1 error report(s) to Monokulo: could not reach it: ', (string)$this->client()->forwardLogs($dead, $one));
 	}
+	/** The Test connection button: the entry's send-test-webhook form, with `{}` and the store's key; Monokulo's answer as it came. */
+	public function test_a_test_webhook_follows_the_entrys_form(): void {
+		self::$monokulo->serveEntry('/monokulo');
+		self::$monokulo->sendsTestWebhook(prefix: '/monokulo');
+
+		$outcome = $this->client()->sendTestWebhook($this->connection('/monokulo'));
+
+		$this->assertSame(['webhook_id' => 'wh_00000000000000000000000000000001', 'event_id' => 'evt_0000000000000002', 'delivered' => true, 'status' => 200, 'duration_ms' => 12, 'error' => null, 'next_attempt_at' => null], $outcome);
+		$this->assertSame(['GET /monokulo/api/v1', 'POST /monokulo/api/v1/webhook-tests'], $this->requested());
+		$request = self::$monokulo->requests()[1];
+		$this->assertSame('{}', $request['body'], 'an object: the plugin\'s own webhook');
+		$this->assertSame('Bearer sk_test', $request['headers']['authorization']);
+		$this->assertSame('application/json', $request['headers']['content-type']);
+	}
+
+	public function test_an_undelivered_test_webhook_says_why_and_when_it_is_tried_again(): void {
+		self::$monokulo->serveEntry();
+		self::$monokulo->sendsTestWebhook(delivered: false);
+
+		$outcome = $this->client()->sendTestWebhook($this->connection());
+
+		$this->assertFalse($outcome['delivered']);
+		$this->assertSame([500, 'answered 500', FakeMonokulo::NEXT_ATTEMPT], [$outcome['status'], $outcome['error'], $outcome['next_attempt_at']]);
+	}
+
+	/** @return array<string, array{string, int, ?int}> */
+	public static function webhookTestProblems(): array {
+		return [
+			'rate-limited' => ['rate-limited', 429, 120],
+			'not-found'    => ['not-found', 404, null],
+			'internal'     => ['internal', 500, null],
+		];
+	}
+
+	#[DataProvider('webhookTestProblems')]
+	public function test_a_test_webhook_monokulo_refuses_is_its_problem(string $name, int $status, ?int $wait): void {
+		self::$monokulo->serveEntry();
+		self::$monokulo->answersWith('POST /api/v1/webhook-tests', $name);
+
+		try {
+			$this->client()->sendTestWebhook($this->connection());
+			$this->fail('no error');
+		} catch (ApiError $e) {
+			$this->assertSame([$status, $name, $wait], [$e->status, $e->problem, $e->retryAfter]);
+		}
+	}
+
+	/** A kept entry from before Monokulo had the form is read again, once. */
+	public function test_a_kept_entry_without_the_form_is_read_again(): void {
+		$old = FakeMonokulo::entry();
+		unset($old['_templates']['send-test-webhook']);
+		$this->entries->keepEntry($this->connection(), new Entry($old, '"old"', $this->now + 3600));
+		self::$monokulo->serveEntry();
+		self::$monokulo->sendsTestWebhook();
+
+		$this->assertTrue($this->client()->sendTestWebhook($this->connection())['delivered']);
+		$this->assertSame(['GET /api/v1', 'POST /api/v1/webhook-tests'], $this->requested());
+	}
+
+	public function test_an_answer_that_is_not_an_outcome_is_an_error(): void {
+		self::$monokulo->serveEntry();
+		self::$monokulo->respond('POST', '/api/v1/webhook-tests', 200, ['hello' => 'world']);
+
+		$this->expectException(ApiError::class);
+		$this->client()->sendTestWebhook($this->connection());
+	}
 }

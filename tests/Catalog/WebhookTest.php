@@ -220,7 +220,8 @@ final class WebhookTest extends ShopTestCase {
 		foreach (Vectors::deliveries() as $name => $delivery) {
 			$this->assertSame(200, $this->deliver($delivery['body'], $delivery['headers']['X-Monokulo-Signature']), $name);
 		}
-		$this->assertCount(1 + count(Vectors::deliveries()) + 1, $this->history($this->orderId), 'one entry each, and the customer told once, on the first payment');
+		$orderEvents = count(Vectors::deliveries()) - 1; // all but webhook.test, which changes no order
+		$this->assertCount(1 + $orderEvents + 1, $this->history($this->orderId), 'one entry each, and the customer told once, on the first payment');
 		$this->assertSame(2, $this->orderStatus($this->orderId));
 	}
 
@@ -265,6 +266,47 @@ final class WebhookTest extends ShopTestCase {
 		$this->db()->query("DELETE FROM `" . DB_PREFIX . "monokulo_order`");
 
 		$this->assertSame(404, $this->deliverVector('order.paid'));
+	}
+
+	/** A test delivery: its signature checked, kept as the last test received, and no order touched. */
+	public function test_the_test_delivery_is_kept_and_changes_no_order(): void {
+		$this->assertSame(200, $this->deliverVector('webhook.test'));
+
+		$connection = $this->repository()->connection(self::HOST);
+		$this->assertSame(Vectors::delivery('webhook.test')['headers']['X-Monokulo-Event-Id'], $connection->lastTestEventId);
+		$this->assertSame(Vectors::sentAt(), $connection->lastTestAt);
+		$this->assertSame(1, $this->orderStatus($this->orderId));
+		$this->assertCount(1, $this->history($this->orderId));
+		$this->assertSame([], $this->rows("SELECT * FROM `" . DB_PREFIX . "monokulo_event`"), 'nothing claimed: a test can come again');
+		$this->assertStringContainsString('Test webhook evt_0000000000000012 received', implode("\n", $this->log));
+
+		// Another one later replaces it.
+		$this->assertSame(200, $this->deliverSigned(['event_id' => 'evt_again'] + json_decode(Vectors::delivery('webhook.test')['body'], true)));
+		$this->assertSame('evt_again', $this->repository()->connection(self::HOST)->lastTestEventId);
+	}
+
+	public function test_a_forged_test_delivery_is_refused_and_not_kept(): void {
+		$delivery = Vectors::delivery('webhook.test');
+
+		$this->assertSame(401, $this->deliver(str_replace('webhook.test', 'webhook.test ', $delivery['body']), $delivery['headers']['X-Monokulo-Signature']));
+		$this->assertSame(401, $this->deliver($delivery['body'], $delivery['headers']['X-Monokulo-Signature'], Vectors::sentAt() + 301), 'too late');
+		$this->assertSame('', $this->repository()->connection(self::HOST)->lastTestEventId);
+	}
+
+	/** An order event with no order in it is signed nonsense: refused, never applied. */
+	public function test_an_order_event_without_an_order_is_a_bad_request(): void {
+		$data = json_decode(Vectors::delivery('order.paid')['body'], true);
+		unset($data['order_id']);
+
+		$this->assertSame(400, $this->deliverSigned($data));
+		$this->assertSame(1, $this->orderStatus($this->orderId));
+	}
+
+	/** An unknown event is a 2xx even when it names no order of this shop's, or none: a 4xx would be a failed delivery, retried. */
+	public function test_an_unknown_event_about_no_order_here_is_accepted(): void {
+		$this->assertSame(200, $this->deliverSigned(['api_version' => 2, 'event_id' => 'evt_x', 'event' => 'order.refunded', 'created_at' => 1, 'order_id' => 'order_elsewhere']));
+		$this->assertSame(200, $this->deliverSigned(['api_version' => 2, 'event_id' => 'evt_y', 'event' => 'store.renamed', 'created_at' => 1]));
+		$this->assertCount(1, $this->history($this->orderId));
 	}
 
 	public function test_an_event_this_version_does_not_know_is_accepted_and_ignored(): void {

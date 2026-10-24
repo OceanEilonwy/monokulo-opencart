@@ -15,9 +15,26 @@ final class WebhookEventTest extends TestCase {
 		$this->assertNotNull($event);
 		$this->assertSame($delivery['headers']['X-Monokulo-Event'], $event->event);
 		$this->assertSame($delivery['headers']['X-Monokulo-Event-Id'], $event->eventId);
+		if ($event->event === WebhookEvent::TEST) {
+			$this->assertSame('', $event->orderId, 'a test is about no order');
+			$this->assertSame('', $event->dashboardUrl);
+
+			return;
+		}
 		$this->assertSame(Vectors::orderId(), $event->orderId);
 		$this->assertSame(json_decode($delivery['body'], true)['_links']['mk:dashboard-order']['href'], $event->dashboardUrl);
 		$this->assertStringEndsWith('/orders/' . Vectors::orderId(), $event->dashboardUrl);
+	}
+
+	/** The published test delivery: signed like the rest, naming the store and the webhook, with no order. */
+	public function test_the_test_delivery_has_no_order(): void {
+		$delivery = Vectors::delivery(WebhookEvent::TEST);
+		$body = json_decode($delivery['body'], true);
+
+		$this->assertSame(WebhookEvent::TEST, $delivery['headers']['X-Monokulo-Event']);
+		$this->assertArrayNotHasKey('order_id', $body);
+		$this->assertArrayHasKey('id', $body['webhook']);
+		$this->assertSame(WebhookEvent::TEST, WebhookEvent::parse($delivery['body'])->event);
 	}
 
 	/** The order's dashboard page comes only as an http(s) address in `_links`; anything else is no link. */
@@ -46,8 +63,9 @@ final class WebhookEventTest extends TestCase {
 			'a list'            => ['[1,2]'],
 			'no event'          => ['{"event_id":"evt_1","order_id":"o1"}'],
 			'no event id'       => ['{"event":"order.paid","order_id":"o1"}'],
-			'no order id'       => ['{"event":"order.paid","event_id":"evt_1"}'],
 			'empty event id'    => ['{"event":"order.paid","event_id":"","order_id":"o1"}'],
+			'empty order id'    => ['{"event":"order.paid","event_id":"evt_1","order_id":""}'],
+			'null order id'     => ['{"event":"order.paid","event_id":"evt_1","order_id":null}'],
 			'numeric order id'  => ['{"event":"order.paid","event_id":"evt_1","order_id":5}'],
 		];
 	}
@@ -64,5 +82,10 @@ final class WebhookEventTest extends TestCase {
 		$this->assertSame('order.refunded', $event->event);
 		$this->assertNull($event->txid);
 		$this->assertSame('', $event->dashboardUrl);
+	}
+
+	/** An event about no order parses, its order id ''; the receiver decides what that means. */
+	public function test_an_event_without_an_order_parses(): void {
+		$this->assertSame('', WebhookEvent::parse('{"event":"order.paid","event_id":"evt_1"}')->orderId);
 	}
 }

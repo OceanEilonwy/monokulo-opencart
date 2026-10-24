@@ -74,6 +74,17 @@ final class WebhookOverHttpTest extends TestCase {
 		$this->assertSame(2, $this->orderStatus(), 'the last one is a payment in XMR');
 	}
 
+	/** The test delivery, through Apache: answered 200, kept for the settings page, no order touched. */
+	public function test_over_http_the_test_delivery_is_kept_and_changes_no_order(): void {
+		$this->assertSame(200, $this->deliver('webhook.test'));
+
+		$row = Shop::rows("SELECT last_test_event_id, last_test_at FROM oc_monokulo_connection WHERE host = 'localhost:8090'")[0];
+		$this->assertSame(Vectors::delivery('webhook.test')['headers']['X-Monokulo-Event-Id'], $row['last_test_event_id']);
+		$this->assertEqualsWithDelta(time(), (int)$row['last_test_at'], 5);
+		$this->assertSame(1, $this->orderStatus());
+		$this->assertSame([], Shop::rows("SELECT * FROM oc_order_history WHERE order_id = " . $this->orderId));
+	}
+
 	public function test_over_http_a_repeat_changes_nothing(): void {
 		$this->assertSame(200, $this->deliver('order.expired'));
 		$this->assertSame(200, $this->deliver('order.expired'));
