@@ -21,7 +21,7 @@ class Monokulo extends \Opencart\System\Engine\Controller {
 		'expired' => 14 // Expired
 	];
 
-	private const CONNECT_ERRORS = ['permission', 'address', 'host', 'finish', 'unavailable', 'busy', 'unreachable'];
+	private const CONNECT_ERRORS = ['permission', 'address', 'host', 'finish', 'unavailable', 'busy', 'expired', 'unreachable'];
 
 	public function index(): void {
 		$this->load->language('extension/monokulo/payment/monokulo');

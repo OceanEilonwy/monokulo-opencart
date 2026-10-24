@@ -130,19 +130,28 @@ final class Client {
 	/**
 	 * The entry's `send-logs` form: the shop's warnings and errors, for the
 	 * merchant to read in Monokulo. Best effort: a failure here (the
-	 * store's client logs are off, Monokulo is down) is ignored.
+	 * store's client logs are off, Monokulo is down) drops the reports and
+	 * is returned as a sentence for the shop's own log; null when they
+	 * were sent, or there was nothing to send.
 	 *
 	 * @param list<array{level: string, message: string, trace_id: string}> $entries
 	 */
-	public function forwardLogs(Connection $connection, array $entries): void {
+	public function forwardLogs(Connection $connection, array $entries): ?string {
 		if (!$entries) {
-			return;
+			return null;
 		}
 		try {
-			$this->submit($connection, 'send-logs', ['entries' => $entries], 3);
-		} catch (ApiError|TransportError) {
-			// Nothing to do: these are reports about other failures.
+			[$response] = $this->submit($connection, 'send-logs', ['entries' => $entries], 3);
+			if ($response->status < 200 || $response->status >= 300) {
+				$this->decode($response, 204);
+			}
+		} catch (ApiError $e) {
+			return sprintf('Could not send %d error report(s) to Monokulo: %s. HTTP %d: %s', count($entries), $e->logsHint(), $e->status, $e->detail);
+		} catch (TransportError $e) {
+			return sprintf('Could not send %d error report(s) to Monokulo: could not reach it: %s', count($entries), $e->getMessage());
 		}
+
+		return null;
 	}
 
 	/**

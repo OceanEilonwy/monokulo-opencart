@@ -88,12 +88,18 @@ asked to choose another currency or payment method, and the shop's log
 says why (Monokulo's own explanation of the problem).
 
 When Monokulo has no exchange rate for the currency right now (its rate
-providers are down or rate limiting it: `rates-unavailable`), or its payment
-engine is busy (`engine-unavailable`), no order is made: the customer is
+providers are down or rate limiting it: `rates-unavailable`), its payment
+engine is busy (`engine-unavailable`), or it can't read the store's settings
+for a moment (`store-unavailable`), no order is made: the customer is
 asked to try again shortly, and the shop's log says which, with how long
 Monokulo asked to wait when it said. Pressing **Pay with Monero** again
 sends the same request with the same idempotency key, so it can never make
 two orders.
+
+With **Send errors to Monokulo** on, the shop's warnings and errors are also
+sent to the store in Monokulo. When Monokulo doesn't take them (most often
+because the store's client logs are off in Monokulo: `logs-off`), they are
+dropped and the shop's own log says why and what to change.
 
 ## Order statuses
 

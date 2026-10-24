@@ -82,6 +82,7 @@ final class SettingsTest extends ShopTestCase {
 		$this->assertStringContainsString('Your store is connected. Monero is now offered at checkout.', $this->admin(self::PAGE, ['monokulo_connected' => '1'])['output']);
 		$this->assertStringContainsString('has not set its public address', $this->admin(self::PAGE, ['monokulo_connect_error' => 'unavailable'])['output']);
 		$this->assertStringContainsString('Your Monokulo is busy: wait a minute, then connect again.', $this->admin(self::PAGE, ['monokulo_connect_error' => 'busy'])['output']);
+		$this->assertStringContainsString('The connect link expired or was already used', $this->admin(self::PAGE, ['monokulo_connect_error' => 'expired'])['output']);
 		$this->assertStringNotContainsString('monokulo-connect-error', $this->admin(self::PAGE, ['monokulo_connect_error' => '<script>'])['output']);
 	}
 
