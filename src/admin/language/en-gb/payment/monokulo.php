@@ -50,4 +50,5 @@ $_['error_connect_host']        = 'The connect flow came back to a different sto
 $_['error_connect_finish']      = 'Monokulo did not hand over the store\'s keys. Please connect again; the log says why.';
 $_['error_connect_unavailable'] = 'Your Monokulo cannot connect shops yet: its operator has not set its public address.';
 $_['error_connect_busy']        = 'Your Monokulo is busy: wait a minute, then connect again.';
+$_['error_connect_expired']     = 'The connect link expired or was already used: it lasts 10 minutes and works once. Please connect again.';
 $_['error_connect_unreachable'] = 'Your Monokulo could not be reached from this shop\'s server. Check the address, then connect again.';

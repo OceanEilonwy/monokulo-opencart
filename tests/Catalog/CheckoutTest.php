@@ -308,12 +308,18 @@ final class CheckoutTest extends ShopTestCase {
 		$recorded = static fn(string $name): string => (string)json_encode(FakeMonokulo::recorded('POST /api/v1/orders', $name));
 
 		return [
-			'busy'          => [429, $recorded('rate-limited'), 'Monero payments are busy right now. Please wait a moment and try again.', 'HTTP 429: Rate limit exceeded; retry in 95 s. (rate limited: Monokulo is receiving too many orders from this store. No order was made; trying again asks for the same order) Monokulo asked to wait 95 seconds before trying again.'],
+			'busy'          => [429, $recorded('rate-limited'), 'Monero payments are busy right now. Please wait a moment and try again.', 'HTTP 429: Rate limit exceeded; retry in 120 s. (rate limited: Monokulo is receiving too many orders from this store. No order was made; trying again asks for the same order) Monokulo asked to wait 120 seconds before trying again.'],
 			'no rate'       => [503, $recorded('rates-unavailable'), 'The Monero price for this order can\'t be worked out right now. Please try again in a minute or two.', 'HTTP 503: There\'s no exchange rate for USD right now: the rate providers are busy or unreachable. Try again in 42 s. (Monokulo has no exchange rate for this currency right now: its rate providers are down or rate limiting it. No order was made; the customer was asked to try again shortly, and trying again asks for the same order) Monokulo asked to wait 42 seconds before trying again.'],
 			'engine down'   => [503, $recorded('engine-unavailable'), 'Monero payments are busy right now. Please wait a moment and try again.', 'HTTP 503: The payment engine is busy or unreachable. Try again in a moment. (Monokulo\'s payment engine is busy or unreachable. No order was made'],
 			'key rejected'  => [401, $recorded('unauthorized'), 'Monero payments are not available for this store right now. Please contact the store owner.', 'connect the store again'],
 			'currency'      => [400, $recorded('invalid-amount'), 'Monero payments can\'t be taken in this order\'s currency right now. Please choose another currency or payment method.', 'HTTP 400: unknown currency: NOPE (Monokulo can\'t price this order'],
 			'already used'  => [409, $recorded('idempotency-conflict'), 'The Monero payment could not be started. Please try again, or contact the store.', 'HTTP 409: this idempotency_key was already used for a different order (Monokulo already has a different order for this payment attempt)'],
+			'settings unreadable' => [503, $recorded('store-unavailable'), 'Monero payments are busy right now. Please wait a moment and try again.', 'HTTP 503: This store\'s settings can\'t be read right now. Please try again shortly. (Monokulo couldn\'t read this store\'s settings, which it checks before making an order: its database didn\'t answer. No order was made; the customer was asked to try again shortly, and trying again asks for the same order. If it keeps happening, ask Monokulo\'s operator to check that Monokulo can reach its database)'],
+			'wrong key'     => [403, $recorded('forbidden'), 'Monero payments are not available for this store right now. Please contact the store owner.', 'HTTP 403: This store only accepts orders from its verified websites, or from its own server using the store\'s secret key. (Monokulo only takes this store\'s orders from its verified websites or with the store\'s secret key, and refused the key this shop has: connect the store again from the extension settings)'],
+			'monokulo failed' => [500, $recorded('internal'), 'The Monero payment could not be started. Please try again, or contact the store.', 'HTTP 500: Something went wrong on this Monokulo. Try again in a moment. (something went wrong inside Monokulo: its operator can find what in Monokulo\'s logs. Trying again asks for the same order)'],
+			'unreadable order' => [400, $recorded('invalid-request'), 'The Monero payment could not be started. Please try again, or contact the store.', '(Monokulo could not read the order this extension sent. No order was made. This is a bug in the extension: please report it with this log line)'],
+			'not JSON'      => [415, $recorded('unsupported-media-type'), 'The Monero payment could not be started. Please try again, or contact the store.', 'HTTP 415: Expected request with `Content-Type: application/json` (Monokulo could not read the order this extension sent.'],
+			'too large'     => [413, $recorded('too-large'), 'The Monero payment could not be started. Please try again, or contact the store.', 'HTTP 413: Failed to buffer the request body: length limit exceeded (the order was too large for Monokulo to read, most likely a very long list of products. No order was made)'],
 			'anything else' => [500, 'oops', 'The Monero payment could not be started. Please try again, or contact the store.', 'HTTP 500: oops'],
 		];
 	}
@@ -411,6 +417,22 @@ final class CheckoutTest extends ShopTestCase {
 		$this->assertSame('error', $entries[0]['level']);
 		$this->assertStringContainsString('HTTP 429: ' . FakeMonokulo::recorded('POST /api/v1/orders', 'rate-limited')['detail'], $entries[0]['message']);
 		$this->assertSame(substr($requests[0]['headers']['traceparent'], 3, 32), $entries[0]['trace_id'], 'the same trace as the failed call');
+	}
+
+	/** Reports Monokulo won't take (client logs off for the store) are dropped, and the shop's own log says why. */
+	public function test_reports_monokulo_refuses_are_noted_in_the_shops_log(): void {
+		$this->connect();
+		self::$monokulo->serveEntry();
+		self::$monokulo->answersWith('POST /api/v1/orders', 'rate-limited');
+		self::$monokulo->answersWith('POST /api/v1/logs', 'logs-off');
+		$this->setting('payment_monokulo_forward_errors', '1');
+		$log = DIR_LOGS . 'monokulo.log';
+		$before = is_file($log) ? (string)file_get_contents($log) : '';
+
+		$this->assertArrayHasKey('error', $this->confirm($this->order())['answer']);
+
+		$this->assertSame(['/api/v1/orders', '/api/v1/logs'], array_slice(array_column(self::$monokulo->requests(), 'path'), -2));
+		$this->assertStringContainsString('Could not send 1 error report(s) to Monokulo: the store\'s client logs are off in Monokulo. Turn them on in the store\'s settings in Monokulo, or turn off "Send errors to Monokulo" here. HTTP 403: ' . FakeMonokulo::recorded('POST /api/v1/logs', 'logs-off')['detail'], substr((string)file_get_contents($log), strlen($before)));
 	}
 
 	public function test_the_button_calls_confirm(): void {

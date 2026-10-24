@@ -104,6 +104,9 @@ final class ClientTest extends TestCase {
 			'bad request'       => [400, 'invalid-request'],
 			'busy'              => [429, 'rate-limited'],
 			'failed'            => [500, 'internal'],
+			'unknown slug'      => [404, 'not-found'],
+			'too large'         => [413, 'too-large'],
+			'not JSON'          => [415, 'unsupported-media-type'],
 		];
 	}
 
@@ -378,6 +381,20 @@ final class ClientTest extends TestCase {
 		}
 	}
 
+	/** A rate-limited entry is no order: the customer tries again shortly, and the log says how long Monokulo asked to wait. */
+	public function test_a_rate_limited_entry_is_retryable(): void {
+		self::$monokulo->answersWith('GET /api/v1', 'rate-limited');
+
+		try {
+			$this->client()->createOrder($this->connection(), []);
+			$this->fail('no error');
+		} catch (ApiError $e) {
+			$this->assertSame([429, 'rate-limited', 120, 'error_busy'], [$e->status, $e->problem, $e->retryAfter, $e->customerMessageKey()]);
+			$this->assertStringEndsWith('Monokulo asked to wait 120 seconds before trying again.', $e->merchantHint());
+		}
+		$this->assertSame([], $this->entries->kept, 'nothing kept');
+	}
+
 	/** A key Monokulo no longer knows fails at the entry already. */
 	public function test_a_replaced_key_fails_at_the_entry(): void {
 		self::$monokulo->answersWith('GET /api/v1', 'unauthorized');
@@ -435,7 +452,8 @@ final class ClientTest extends TestCase {
 		$this->assertStringContainsString('Monokulo address', (new ApiError(404, ''))->merchantHint());
 		$this->assertStringContainsString('rate limited', (new ApiError(429, ''))->merchantHint());
 		$this->assertStringContainsString('busy', (new ApiError(503, ''))->merchantHint());
-		$this->assertSame('', (new ApiError(500, ''))->merchantHint());
+		$this->assertStringContainsString('Monokulo\'s logs', (new ApiError(500, ''))->merchantHint());
+		$this->assertSame('', (new ApiError(418, ''))->merchantHint());
 	}
 
 	public function test_nothing_listening_is_a_transport_error(): void {
@@ -462,25 +480,50 @@ final class ClientTest extends TestCase {
 		$this->assertSame(['entries' => $entries], json_decode($request['body'], true));
 	}
 
-	/** Nothing to send, a store with client logs off, an entry without the form, a dead Monokulo: all quietly nothing. */
-	public function test_forwarding_is_best_effort(): void {
-		$this->client()->forwardLogs($this->connection(), []);
+	/** Nothing to send, or sent: nothing to note. */
+	public function test_forwarding_says_nothing_when_sent(): void {
+		$this->assertNull($this->client()->forwardLogs($this->connection(), []));
 		$this->assertSame([], self::$monokulo->requests());
 
-		$one = [['level' => 'error', 'message' => 'm', 'trace_id' => 'x']];
 		self::$monokulo->serveEntry();
-		self::$monokulo->answersWith('POST /api/v1/logs', 'logs-off');
-		$this->client()->forwardLogs($this->connection(), $one);
-		$this->assertSame(['GET /api/v1', 'POST /api/v1/logs'], $this->requested());
+		self::$monokulo->respond('POST', '/api/v1/logs', 204, '');
+		$this->assertNull($this->client()->forwardLogs($this->connection(), [['level' => 'error', 'message' => 'm', 'trace_id' => 'x']]));
+	}
 
+	public static function logsProblems(): array {
+		return [
+			'client logs off' => ['logs-off', 'the store\'s client logs are off in Monokulo. Turn them on in the store\'s settings in Monokulo, or turn off "Send errors to Monokulo" here'],
+			'key rejected'    => ['unauthorized', 'Monokulo refused this store\'s key: connect the store again from the extension settings'],
+			'key not allowed' => ['forbidden', 'Monokulo refused this store\'s key: connect the store again from the extension settings'],
+			'rate limited'    => ['rate-limited', 'Monokulo is rate limiting this store\'s reports'],
+			'too large'       => ['too-large', 'they were too large for Monokulo to read'],
+			'unreadable'      => ['invalid-request', 'Monokulo could not read them. This is a bug in the extension: please report it with this log line'],
+			'not JSON'        => ['unsupported-media-type', 'Monokulo could not read them. This is a bug in the extension: please report it with this log line'],
+		];
+	}
+
+	/** Each problem send-logs answers with drops the reports, and says why for the shop's own log. */
+	#[DataProvider('logsProblems')]
+	public function test_reports_monokulo_refuses_are_dropped_with_a_reason(string $name, string $reason): void {
+		self::$monokulo->serveEntry();
+		self::$monokulo->answersWith('POST /api/v1/logs', $name);
+		$problem = FakeMonokulo::recorded('POST /api/v1/logs', $name);
+
+		$note = $this->client()->forwardLogs($this->connection(), [['level' => 'error', 'message' => 'm', 'trace_id' => 'x']]);
+
+		$this->assertSame(sprintf('Could not send 1 error report(s) to Monokulo: %s. HTTP %d: %s', $reason, $problem['status'], $problem['detail']), $note);
+		$this->assertSame(['GET /api/v1', 'POST /api/v1/logs'], $this->requested(), 'sent once, not retried');
+	}
+
+	/** An entry without the form, a dead Monokulo: dropped, with a reason. */
+	public function test_forwarding_is_best_effort(): void {
+		$one = [['level' => 'error', 'message' => 'm', 'trace_id' => 'x']];
 		$entry = FakeMonokulo::entry();
 		unset($entry['_templates']['send-logs']);
-		$this->entries->kept = [];
 		self::$monokulo->respond('GET', '/api/v1', 200, $entry);
-		$this->client()->forwardLogs($this->connection(), $one);
+		$this->assertStringStartsWith('Could not send 1 error report(s) to Monokulo: ', (string)$this->client()->forwardLogs($this->connection(), $one));
 
 		$dead = new Connection('shop.example', 'http://127.0.0.1:' . FakeMonokulo::freePort() . '/api/v1', 'pk', 'sk', 'wh', 1);
-		$this->client()->forwardLogs($dead, $one);
-		$this->addToAssertionCount(1);
+		$this->assertStringStartsWith('Could not send 1 error report(s) to Monokulo: could not reach it: ', (string)$this->client()->forwardLogs($dead, $one));
 	}
 }

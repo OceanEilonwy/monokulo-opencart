@@ -206,11 +206,12 @@ class Monokulo extends \Opencart\System\Engine\Controller {
 		try {
 			$credentials = $this->client()->finishConnect($address, (string)$this->request->get['token'], $webhook_url);
 		} catch (ApiError $e) {
-			$this->log()->error(sprintf('Connect finish at %s failed: HTTP %d: %s', $address, $e->status, $e->detail));
+			$this->log()->error(sprintf('Connect finish at %s failed: HTTP %d: %s%s', $address, $e->status, $e->detail, $e->connectHint()));
 
 			return 'monokulo_connect_error=' . match ($e->problem) {
-				'no-public-address' => 'unavailable',
-				'rate-limited'      => 'busy',
+				'no-public-address'    => 'unavailable',
+				'rate-limited'         => 'busy',
+				'invalid-connect-code' => 'expired',
 				default             => 'finish',
 			};
 		} catch (TransportError $e) {
@@ -260,7 +261,11 @@ class Monokulo extends \Opencart\System\Engine\Controller {
 	/** Sends this request's warnings and errors to Monokulo, when the merchant turned that on. */
 	private function forward(?Connection $connection): void {
 		if ($this->logger && $connection && $this->config->get('payment_monokulo_forward_errors')) {
-			$this->client()->forwardLogs($connection, $this->logger->forwardable());
+			$failed = $this->client()->forwardLogs($connection, $this->logger->forwardable());
+			if ($failed !== null) {
+				// Only to the shop's log: forward() runs once per request, so this isn't sent on.
+				$this->logger->warning($failed);
+			}
 		}
 	}
 }

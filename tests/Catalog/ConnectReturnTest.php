@@ -149,17 +149,20 @@ final class ConnectReturnTest extends ShopTestCase {
 
 	public static function finishFailures(): array {
 		return [
-			'no public address yet' => [503, 'no-public-address', 'unavailable'],
-			'token refused'         => [401, 'invalid-connect-code', 'finish'],
-			'refused request'       => [400, 'invalid-request', 'finish'],
-			'rate limited'          => [429, 'rate-limited', 'busy'],
-			'failed after spending' => [500, 'internal', 'finish'],
+			'no public address yet' => [503, 'no-public-address', 'unavailable', 'its public address'],
+			'token refused'         => [401, 'invalid-connect-code', 'expired', '(the connect code expired or was already used: it lasts 10 minutes and works once. Connect again from the extension settings)'],
+			'refused request'       => [400, 'invalid-request', 'finish', 'check that the store\'s URL in OpenCart\'s settings is a full http:// or https:// address'],
+			'rate limited'          => [429, 'rate-limited', 'busy', '(rate limited: wait a minute, then connect again) Monokulo asked to wait 120 seconds.'],
+			'failed after spending' => [500, 'internal', 'finish', 'its operator can find what in Monokulo\'s logs'],
+			'unknown slug'          => [404, 'not-found', 'finish', 'This is a bug in the extension'],
+			'too large'             => [413, 'too-large', 'finish', 'This is a bug in the extension'],
+			'not JSON'              => [415, 'unsupported-media-type', 'finish', 'This is a bug in the extension'],
 		];
 	}
 
 	/** Each of the handshake's problems tells the admin what to do. */
 	#[\PHPUnit\Framework\Attributes\DataProvider('finishFailures')]
-	public function test_when_monokulo_does_not_hand_over_the_keys_the_admin_is_told(int $status, string $problem, string $error): void {
+	public function test_when_monokulo_does_not_hand_over_the_keys_the_admin_is_told(int $status, string $problem, string $error, string $hint): void {
 		self::$monokulo->answersWith('POST /plugins/connect/{slug}/finish', $problem);
 		$log = DIR_LOGS . 'monokulo.log';
 		$before = is_file($log) ? (string)file_get_contents($log) : '';
@@ -168,7 +171,9 @@ final class ConnectReturnTest extends ShopTestCase {
 
 		$this->assertSame(self::ADMIN . '&monokulo_connect_error=' . $error, OpenCart::location($answer));
 		$this->assertNull($this->repository()->connection(self::HOST));
-		$this->assertStringContainsString('HTTP ' . $status . ': ' . FakeMonokulo::recorded('POST /plugins/connect/{slug}/finish', $problem)['detail'], substr((string)file_get_contents($log), strlen($before)));
+		$logged = substr((string)file_get_contents($log), strlen($before));
+		$this->assertStringContainsString('HTTP ' . $status . ': ' . FakeMonokulo::recorded('POST /plugins/connect/{slug}/finish', $problem)['detail'], $logged);
+		$this->assertStringContainsString($hint, $logged);
 	}
 
 	/** Without a webhook secret the shop could never trust a webhook: that's no connection. */
