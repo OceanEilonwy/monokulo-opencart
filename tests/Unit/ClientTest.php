@@ -107,16 +107,16 @@ final class ClientTest extends TestCase {
 		];
 	}
 
-	/** The handshake's problems come back by name, with their detail. */
+	/** The handshake's problems, as Monokulo's OpenAPI records them, come back by name, with their detail. */
 	#[DataProvider('handshakeProblems')]
 	public function test_a_refused_handshake_names_its_problem(int $status, string $name): void {
-		self::$monokulo->problem('POST', '/plugins/connect/opencart/finish', $status, $name, 'why: ' . $name);
+		self::$monokulo->answersWith('POST /plugins/connect/{slug}/finish', $name);
 
 		try {
 			$this->client()->finishConnect(self::$monokulo->url, 'tok', 'https://shop.example/');
 			$this->fail('no error');
 		} catch (ApiError $e) {
-			$this->assertSame([$status, 'why: ' . $name, $name], [$e->status, $e->detail, $e->problem]);
+			$this->assertSame([$status, FakeMonokulo::recorded('POST /plugins/connect/{slug}/finish', $name)['detail'], $name], [$e->status, $e->detail, $e->problem]);
 		}
 	}
 
@@ -141,6 +141,25 @@ final class ClientTest extends TestCase {
 		$this->assertSame('opencart/' . Plugin::VERSION, $create['headers']['monokulo-client']);
 		$this->assertSame('application/json', $create['headers']['content-type']);
 		$this->assertSame(['amount' => '1', 'currency' => 'EUR'], json_decode($create['body'], true));
+	}
+
+	/**
+	 * Monokulo leaves out a field with no value: an order without an
+	 * amount, currency, merchant order id, description or cancellation
+	 * time is still an order.
+	 */
+	public function test_an_order_without_its_optional_fields_is_an_order(): void {
+		$order = FakeMonokulo::order('order_1');
+		unset($order['amount'], $order['currency'], $order['merchant_order_id'], $order['description']);
+		$this->assertArrayNotHasKey('cancelled_at', $order);
+		self::$monokulo->serveEntry();
+		self::$monokulo->respond('POST', '/api/v1/orders', 201, $order, headers: ['Content-Type' => 'application/prs.hal-forms+json']);
+
+		$this->assertSame([
+			'order_id'           => 'order_1',
+			'checkout_url'       => self::$monokulo->url . '/checkout/order_1',
+			'onion_checkout_url' => '',
+		], $this->client()->createOrder($this->connection(), []));
 	}
 
 	/** While Monokulo has an onion address, the order's checkout there comes back too, as it is. */
@@ -279,7 +298,7 @@ final class ClientTest extends TestCase {
 	/** A fresh entry's form refused is the answer: no loop. */
 	public function test_a_refusal_from_a_fresh_entry_is_not_retried(): void {
 		self::$monokulo->serveEntry();
-		self::$monokulo->problem('POST', '/api/v1/orders', 401, 'unauthorized', 'unknown key');
+		self::$monokulo->answersWith('POST /api/v1/orders', 'unauthorized');
 
 		try {
 			$this->client()->createOrder($this->connection(), []);
@@ -308,14 +327,20 @@ final class ClientTest extends TestCase {
 	}
 
 	public static function failures(): array {
-		$problem = static fn(string $name, string $detail): string => (string)json_encode(['type' => 'https://docs.monokulo.com/problems/' . $name, 'title' => 'T', 'detail' => $detail]);
+		$problem = static function (string $name, string $customer): array {
+			$recorded = FakeMonokulo::recorded('POST /api/v1/orders', $name);
+
+			return [$recorded['status'], (string)json_encode($recorded), $recorded['detail'], $name, $customer];
+		};
 
 		return [
-			'rate limited'   => [429, $problem('rate-limited', 'slow down'), 'slow down', 'rate-limited', 'error_busy'],
-			'engine down'    => [503, $problem('engine-unavailable', 'busy'), 'busy', 'engine-unavailable', 'error_busy'],
-			'no rate'        => [503, $problem('rates-unavailable', 'no rate for EUR'), 'no rate for EUR', 'rates-unavailable', 'error_rates'],
-			'refused'        => [403, $problem('forbidden', 'not this key'), 'not this key', 'forbidden', 'error_unavailable'],
-			'currency'       => [400, $problem('invalid-amount', 'unsupported currency: NOK'), 'unsupported currency: NOK', 'invalid-amount', 'error_currency'],
+			'rate limited'   => $problem('rate-limited', 'error_busy'),
+			'engine down'    => $problem('engine-unavailable', 'error_busy'),
+			'no rate'        => $problem('rates-unavailable', 'error_rates'),
+			'refused'        => $problem('forbidden', 'error_unavailable'),
+			'currency'       => $problem('invalid-amount', 'error_currency'),
+			'already used'   => $problem('idempotency-conflict', 'error_generic'),
+			'failed'         => $problem('internal', 'error_generic'),
 			'title only'     => [500, '{"type":"https://docs.monokulo.com/problems/internal","title":"Internal error"}', 'Internal error', 'internal', 'error_generic'],
 			'not JSON'       => [500, 'oops', 'oops', '', 'error_generic'],
 			'not created'    => [200, '{"order_id":"x"}', '{"order_id":"x"}', '', 'error_generic'],
@@ -355,13 +380,13 @@ final class ClientTest extends TestCase {
 
 	/** A key Monokulo no longer knows fails at the entry already. */
 	public function test_a_replaced_key_fails_at_the_entry(): void {
-		self::$monokulo->problem('GET', '/api/v1', 401, 'unauthorized', 'unknown key');
+		self::$monokulo->answersWith('GET /api/v1', 'unauthorized');
 
 		try {
 			$this->client()->createOrder($this->connection(), []);
 			$this->fail('no error');
 		} catch (ApiError $e) {
-			$this->assertSame([401, 'unknown key', 'unauthorized', 'error_unavailable'], [$e->status, $e->detail, $e->problem, $e->customerMessageKey()]);
+			$this->assertSame([401, FakeMonokulo::recorded('GET /api/v1', 'unauthorized')['detail'], 'unauthorized', 'error_unavailable'], [$e->status, $e->detail, $e->problem, $e->customerMessageKey()]);
 			$this->assertStringContainsString('connect the store again', $e->merchantHint());
 		}
 		$this->assertSame([], $this->entries->kept, 'nothing kept');
@@ -378,7 +403,7 @@ final class ClientTest extends TestCase {
 		];
 		foreach ($cases as $name => [$fields, $headers, $wait]) {
 			self::$monokulo->serveEntry();
-			self::$monokulo->respond('POST', '/api/v1/orders', 503, (string)json_encode(['type' => 'https://docs.monokulo.com/problems/rates-unavailable', 'title' => 'No exchange rate', 'status' => 503, 'detail' => 'no rate'] + $fields), headers: ['Content-Type' => 'application/problem+json'] + $headers);
+			self::$monokulo->respond('POST', '/api/v1/orders', 503, (string)json_encode($fields + array_diff_key(FakeMonokulo::recorded('POST /api/v1/orders', 'rates-unavailable'), ['retry_after' => true])), headers: ['Content-Type' => 'application/problem+json'] + $headers);
 
 			try {
 				$this->client()->createOrder($this->connection(), []);
@@ -444,7 +469,7 @@ final class ClientTest extends TestCase {
 
 		$one = [['level' => 'error', 'message' => 'm', 'trace_id' => 'x']];
 		self::$monokulo->serveEntry();
-		self::$monokulo->problem('POST', '/api/v1/logs', 403, 'logs-off', 'client logs are off');
+		self::$monokulo->answersWith('POST /api/v1/logs', 'logs-off');
 		$this->client()->forwardLogs($this->connection(), $one);
 		$this->assertSame(['GET /api/v1', 'POST /api/v1/logs'], $this->requested());
 

@@ -132,7 +132,6 @@ final class FakeMonokulo {
 			'confirmations_required'   => 10,
 			'created_at'               => 1,
 			'expires_at'               => 2,
-			'cancelled_at'             => null,
 			'_links'                   => $links,
 		];
 	}
@@ -153,7 +152,54 @@ final class FakeMonokulo {
 			+ ['webhook_signing_secret' => 'whsec_new'];
 	}
 
-	/** Makes `METHOD path` answer with a problem (`application/problem+json`). */
+	/**
+	 * Monokulo's problems the plugin meets, by route and name, as the
+	 * examples in Monokulo's OpenAPI document record them (the smoke test
+	 * checks each against the document written at the pinned commit).
+	 */
+	public const PROBLEMS = [
+		'POST /api/v1/orders' => [
+			'invalid-amount'       => ['detail' => 'unknown currency: NOPE', 'status' => 400, 'title' => 'The order can\'t be priced', 'type' => 'https://docs.monokulo.com/problems/invalid-amount'],
+			'unauthorized'         => ['detail' => 'This key was not accepted. Check it, or connect the store or app again.', 'status' => 401, 'title' => 'No valid key', 'type' => 'https://docs.monokulo.com/problems/unauthorized'],
+			'forbidden'            => ['detail' => 'This store only accepts orders from its verified websites, or from its own server using the store\'s secret key.', 'status' => 403, 'title' => 'Not allowed with this key', 'type' => 'https://docs.monokulo.com/problems/forbidden'],
+			'idempotency-conflict' => ['detail' => 'this idempotency_key was already used for a different order', 'status' => 409, 'title' => 'Key used for another order', 'type' => 'https://docs.monokulo.com/problems/idempotency-conflict'],
+			'rate-limited'         => ['detail' => 'Rate limit exceeded; retry in 95 s.', 'retry_after' => 95, 'status' => 429, 'title' => 'Too many requests', 'type' => 'https://docs.monokulo.com/problems/rate-limited'],
+			'internal'             => ['detail' => 'Something went wrong on this Monokulo. Try again in a moment.', 'status' => 500, 'title' => 'Internal error', 'type' => 'https://docs.monokulo.com/problems/internal'],
+			'engine-unavailable'   => ['detail' => 'The payment engine is busy or unreachable. Try again in a moment.', 'status' => 503, 'title' => 'Payment engine unavailable', 'type' => 'https://docs.monokulo.com/problems/engine-unavailable'],
+			'rates-unavailable'    => ['detail' => 'There\'s no exchange rate for USD right now: the rate providers are busy or unreachable. Try again in 42 s.', 'retry_after' => 42, 'status' => 503, 'title' => 'No exchange rate right now', 'type' => 'https://docs.monokulo.com/problems/rates-unavailable'],
+		],
+		'GET /api/v1' => [
+			'unauthorized' => ['detail' => 'This key was not accepted. Check it, or connect the store or app again.', 'status' => 401, 'title' => 'No valid key', 'type' => 'https://docs.monokulo.com/problems/unauthorized'],
+		],
+		'POST /api/v1/logs' => [
+			'logs-off' => ['detail' => 'This store hasn\'t turned on client logs. Its owner can turn them on in the store\'s settings.', 'status' => 403, 'title' => 'Client logs are off for this store', 'type' => 'https://docs.monokulo.com/problems/logs-off'],
+		],
+		'POST /plugins/connect/{slug}/finish' => [
+			'invalid-request'      => ['detail' => 'A webhook URL must start with http:// or https://.', 'status' => 400, 'title' => 'Invalid request', 'type' => 'https://docs.monokulo.com/problems/invalid-request'],
+			'invalid-connect-code' => ['detail' => 'This connect code is unknown, already used or expired. Start connecting again.', 'status' => 401, 'title' => 'Connect code not valid', 'type' => 'https://docs.monokulo.com/problems/invalid-connect-code'],
+			'rate-limited'         => ['detail' => 'Rate limit exceeded; retry in 96 s.', 'retry_after' => 96, 'status' => 429, 'title' => 'Too many requests', 'type' => 'https://docs.monokulo.com/problems/rate-limited'],
+			'internal'             => ['detail' => 'Something went wrong on this Monokulo. Try again in a moment.', 'status' => 500, 'title' => 'Internal error', 'type' => 'https://docs.monokulo.com/problems/internal'],
+			'no-public-address'    => ['detail' => 'This Monokulo instance can\'t connect plugins yet: its operator hasn\'t set its public address (the public URI setting on the admin settings page). Plugins need it to create orders and send customers to the checkout. Ask the operator to set it, then try connecting again.', 'status' => 503, 'title' => 'No public address yet', 'type' => 'https://docs.monokulo.com/problems/no-public-address'],
+		],
+	];
+
+	/** @return array<string, mixed> the problem `name` as `route` (`POST /api/v1/orders`) answers it, recorded in PROBLEMS */
+	public static function recorded(string $route, string $name): array {
+		return self::PROBLEMS[$route][$name] ?? throw new \LogicException('no recorded ' . $name . ' for ' . $route);
+	}
+
+	/**
+	 * Makes `route` (`POST /api/v1/orders`, its `{slug}` this plugin's,
+	 * under `prefix`) answer with its recorded problem `name`, and with
+	 * `Retry-After` when the problem has a `retry_after`, as Monokulo does.
+	 */
+	public function answersWith(string $route, string $name, string $prefix = ''): void {
+		$problem = self::recorded($route, $name);
+		[$method, $path] = explode(' ', str_replace('{slug}', 'opencart', $route), 2);
+		$this->respond($method, $prefix . $path, $problem['status'], $problem, headers: ['Content-Type' => 'application/problem+json'] + (isset($problem['retry_after']) ? ['Retry-After' => (string)$problem['retry_after']] : []));
+	}
+
+	/** Makes `METHOD path` answer with a hand-built problem (`application/problem+json`), for an answer Monokulo's OpenAPI has no example of. */
 	public function problem(string $method, string $path, int $status, string $name, string $detail): void {
 		$this->respond($method, $path, $status, ['type' => 'https://docs.monokulo.com/problems/' . $name, 'title' => 'A problem', 'status' => $status, 'detail' => $detail], headers: ['Content-Type' => 'application/problem+json']);
 	}

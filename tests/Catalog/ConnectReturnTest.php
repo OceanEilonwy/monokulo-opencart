@@ -160,7 +160,7 @@ final class ConnectReturnTest extends ShopTestCase {
 	/** Each of the handshake's problems tells the admin what to do. */
 	#[\PHPUnit\Framework\Attributes\DataProvider('finishFailures')]
 	public function test_when_monokulo_does_not_hand_over_the_keys_the_admin_is_told(int $status, string $problem, string $error): void {
-		self::$monokulo->problem('POST', '/plugins/connect/opencart/finish', $status, $problem, 'because');
+		self::$monokulo->answersWith('POST /plugins/connect/{slug}/finish', $problem);
 		$log = DIR_LOGS . 'monokulo.log';
 		$before = is_file($log) ? (string)file_get_contents($log) : '';
 
@@ -168,7 +168,7 @@ final class ConnectReturnTest extends ShopTestCase {
 
 		$this->assertSame(self::ADMIN . '&monokulo_connect_error=' . $error, OpenCart::location($answer));
 		$this->assertNull($this->repository()->connection(self::HOST));
-		$this->assertStringContainsString('HTTP ' . $status . ': because', substr((string)file_get_contents($log), strlen($before)));
+		$this->assertStringContainsString('HTTP ' . $status . ': ' . FakeMonokulo::recorded('POST /plugins/connect/{slug}/finish', $problem)['detail'], substr((string)file_get_contents($log), strlen($before)));
 	}
 
 	/** Without a webhook secret the shop could never trust a webhook: that's no connection. */

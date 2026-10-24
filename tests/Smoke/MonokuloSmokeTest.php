@@ -171,9 +171,10 @@ final class MonokuloSmokeTest extends TestCase {
 	 * written at the pinned commit (`cargo xtask api openapi`): the entry
 	 * as the secret key sees it (`sk`, `sk-with-onion`), an order made
 	 * with that key, the handshake's answer (`no-key`,
-	 * `no-key-with-onion`), and the handshake's problems the plugin tells
-	 * apart. Each stand-in answer is compared with its own example, on a
-	 * Monokulo without an onion address and on one with.
+	 * `no-key-with-onion`), the handshake's problems the plugin tells
+	 * apart, and every problem the stand-in answers with (PROBLEMS). Each
+	 * stand-in answer is compared with its own example, on a Monokulo
+	 * without an onion address and on one with.
 	 */
 	public function test_the_stand_in_matches_monokulos_examples(): void {
 		$file = getenv('MONOKULO_OPENAPI_FILE');
@@ -225,6 +226,23 @@ final class MonokuloSmokeTest extends TestCase {
 		foreach (['401' => 'invalid-connect-code', '429' => 'rate-limited', '500' => 'internal', '503' => 'no-public-address'] as $status => $problem) {
 			$types = array_column($examples($finish, (string)$status, 'application/problem+json'), 'type');
 			$this->assertContains('https://docs.monokulo.com/problems/' . $problem, $types, (string)$status);
+		}
+
+		// Every problem the stand-in answers with is the example recorded for its route, status, headers and all.
+		foreach (FakeMonokulo::PROBLEMS as $route => $problems) {
+			[$method, $path] = explode(' ', $route, 2);
+			$responses = $openapi['paths'][$path][strtolower($method)]['responses'];
+			foreach ($problems as $name => $standIn) {
+				$response = $responses[(string)$standIn['status']] ?? [];
+				$example = $response['content']['application/problem+json']['examples'][$name]['value'] ?? null;
+				$this->assertNotNull($example, $route . ' records ' . $name . ' under ' . $standIn['status']);
+				ksort($standIn);
+				ksort($example);
+				$this->assertSame($example, $standIn, $route . ' ' . $name);
+				if (isset($standIn['retry_after'])) {
+					$this->assertArrayHasKey('Retry-After', $response['headers'] ?? [], $route . ' ' . $name . ' says how long to wait in a header too');
+				}
+			}
 		}
 	}
 
