@@ -305,12 +305,15 @@ final class CheckoutTest extends ShopTestCase {
 	}
 
 	public static function failures(): array {
+		$recorded = static fn(string $name): string => (string)json_encode(FakeMonokulo::recorded('POST /api/v1/orders', $name));
+
 		return [
-			'busy'          => [429, '{"type":"https://docs.monokulo.com/problems/rate-limited","detail":"slow down"}', 'Monero payments are busy right now. Please wait a moment and try again.', 'rate limited'],
-			'no rate'       => [503, '{"type":"https://docs.monokulo.com/problems/rates-unavailable","detail":"no exchange rate for EUR right now","retry_after":30}', 'The Monero price for this order can\'t be worked out right now. Please try again in a minute or two.', 'HTTP 503: no exchange rate for EUR right now (Monokulo has no exchange rate for this currency right now: its rate providers are down or rate limiting it. No order was made; the customer was asked to try again shortly, and trying again asks for the same order) Monokulo asked to wait 30 seconds before trying again.'],
-			'engine down'   => [503, '{"type":"https://docs.monokulo.com/problems/engine-unavailable","detail":"the payment engine is busy"}', 'Monero payments are busy right now. Please wait a moment and try again.', 'HTTP 503: the payment engine is busy (Monokulo\'s payment engine is busy or unreachable. No order was made'],
-			'key rejected'  => [401, '{"type":"https://docs.monokulo.com/problems/unauthorized","detail":"unknown key"}', 'Monero payments are not available for this store right now. Please contact the store owner.', 'connect the store again'],
-			'currency'      => [400, '{"type":"https://docs.monokulo.com/problems/invalid-amount","detail":"unsupported currency: EUR"}', 'Monero payments can\'t be taken in this order\'s currency right now. Please choose another currency or payment method.', 'HTTP 400: unsupported currency: EUR (Monokulo can\'t price this order'],
+			'busy'          => [429, $recorded('rate-limited'), 'Monero payments are busy right now. Please wait a moment and try again.', 'HTTP 429: Rate limit exceeded; retry in 95 s. (rate limited: Monokulo is receiving too many orders from this store. No order was made; trying again asks for the same order) Monokulo asked to wait 95 seconds before trying again.'],
+			'no rate'       => [503, $recorded('rates-unavailable'), 'The Monero price for this order can\'t be worked out right now. Please try again in a minute or two.', 'HTTP 503: There\'s no exchange rate for USD right now: the rate providers are busy or unreachable. Try again in 42 s. (Monokulo has no exchange rate for this currency right now: its rate providers are down or rate limiting it. No order was made; the customer was asked to try again shortly, and trying again asks for the same order) Monokulo asked to wait 42 seconds before trying again.'],
+			'engine down'   => [503, $recorded('engine-unavailable'), 'Monero payments are busy right now. Please wait a moment and try again.', 'HTTP 503: The payment engine is busy or unreachable. Try again in a moment. (Monokulo\'s payment engine is busy or unreachable. No order was made'],
+			'key rejected'  => [401, $recorded('unauthorized'), 'Monero payments are not available for this store right now. Please contact the store owner.', 'connect the store again'],
+			'currency'      => [400, $recorded('invalid-amount'), 'Monero payments can\'t be taken in this order\'s currency right now. Please choose another currency or payment method.', 'HTTP 400: unknown currency: NOPE (Monokulo can\'t price this order'],
+			'already used'  => [409, $recorded('idempotency-conflict'), 'The Monero payment could not be started. Please try again, or contact the store.', 'HTTP 409: this idempotency_key was already used for a different order (Monokulo already has a different order for this payment attempt)'],
 			'anything else' => [500, 'oops', 'The Monero payment could not be started. Please try again, or contact the store.', 'HTTP 500: oops'],
 		];
 	}
@@ -345,7 +348,8 @@ final class CheckoutTest extends ShopTestCase {
 	/** No exchange rate right now: the customer tries again shortly, and the same request (same idempotency key) then makes the order. */
 	public function test_trying_again_after_no_exchange_rate_makes_the_same_order(): void {
 		$this->connect();
-		$this->monokuloAnswers(503, '{"type":"https://docs.monokulo.com/problems/rates-unavailable","detail":"no rate","retry_after":30}');
+		self::$monokulo->serveEntry();
+		self::$monokulo->answersWith('POST /api/v1/orders', 'rates-unavailable');
 		$orderId = $this->order();
 		$this->assertArrayHasKey('error', $this->confirm($orderId)['answer']);
 		$this->monokuloAnswers(201, FakeMonokulo::order('ord_1'));
@@ -386,14 +390,16 @@ final class CheckoutTest extends ShopTestCase {
 	/** With "Send errors to Monokulo" on, a failure is also reported to Monokulo; off, it isn't. */
 	public function test_errors_are_forwarded_only_when_turned_on(): void {
 		$this->connect();
-		$this->monokuloAnswers(429, '{"type":"https://docs.monokulo.com/problems/rate-limited","detail":"slow down"}');
+		self::$monokulo->serveEntry();
+		self::$monokulo->answersWith('POST /api/v1/orders', 'rate-limited');
 		self::$monokulo->respond('POST', '/api/v1/logs', 204, '');
 
 		$this->confirm($this->order());
 		$this->assertSame(['/api/v1', '/api/v1/orders'], array_column(self::$monokulo->requests(), 'path'));
 
 		self::$monokulo->reset();
-		$this->monokuloAnswers(429, '{"type":"https://docs.monokulo.com/problems/rate-limited","detail":"slow down"}');
+		self::$monokulo->serveEntry();
+		self::$monokulo->answersWith('POST /api/v1/orders', 'rate-limited');
 		self::$monokulo->respond('POST', '/api/v1/logs', 204, '');
 		$this->setting('payment_monokulo_forward_errors', '1');
 
@@ -403,7 +409,7 @@ final class CheckoutTest extends ShopTestCase {
 		$this->assertSame('Bearer sk_test', $requests[1]['headers']['authorization']);
 		$entries = json_decode($requests[1]['body'], true)['entries'];
 		$this->assertSame('error', $entries[0]['level']);
-		$this->assertStringContainsString('HTTP 429: slow down', $entries[0]['message']);
+		$this->assertStringContainsString('HTTP 429: ' . FakeMonokulo::recorded('POST /api/v1/orders', 'rate-limited')['detail'], $entries[0]['message']);
 		$this->assertSame(substr($requests[0]['headers']['traceparent'], 3, 32), $entries[0]['trace_id'], 'the same trace as the failed call');
 	}
 
