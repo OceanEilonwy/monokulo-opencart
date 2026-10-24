@@ -8,7 +8,8 @@ namespace Monokulo\OpenCart;
  * with OpenCart's `query`, `escape` and `countAffected`).
  *
  * - `monokulo_connection`: one row per shop host that has connected, with
- *   the API's entry as last read for its key (see EntryStore).
+ *   the API's entry as last read for its key (see EntryStore), and the
+ *   last test webhook its receiver took.
  * - `monokulo_order`: each Monokulo order the shop created, and which
  *   OpenCart order it pays. An
  *   OpenCart order can have more than one when its total changed after a
@@ -46,6 +47,8 @@ final class Repository implements EntryStore {
 				`entry` MEDIUMTEXT NULL,
 				`entry_etag` VARCHAR(255) NOT NULL DEFAULT '',
 				`entry_expires_at` INT(11) NOT NULL DEFAULT 0,
+				`last_test_event_id` VARCHAR(64) NOT NULL DEFAULT '',
+				`last_test_at` INT(11) NOT NULL DEFAULT 0,
 				PRIMARY KEY (`host`)
 			) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci",
 			"CREATE TABLE IF NOT EXISTS `{$p}monokulo_order` (
@@ -88,8 +91,8 @@ final class Repository implements EntryStore {
 	/**
 	 * Columns added since the extension's first API version made its
 	 * tables, and what they hold for what was there before: `onion_api`
-	 * is '' until the shop connects again, and there is no kept entry
-	 * until the next order reads it.
+	 * is '' until the shop connects again, there is no kept entry
+	 * until the next order reads it, and no test webhook received yet.
 	 */
 	private const ADDED = [
 		'monokulo_connection' => [
@@ -97,6 +100,8 @@ final class Repository implements EntryStore {
 			'entry'            => 'MEDIUMTEXT NULL',
 			'entry_etag'       => "VARCHAR(255) NOT NULL DEFAULT ''",
 			'entry_expires_at' => 'INT(11) NOT NULL DEFAULT 0',
+			'last_test_event_id' => "VARCHAR(64) NOT NULL DEFAULT ''",
+			'last_test_at'       => 'INT(11) NOT NULL DEFAULT 0',
 		],
 	];
 
@@ -138,7 +143,7 @@ final class Repository implements EntryStore {
 	public function connection(string $host): ?Connection {
 		$query = "SELECT * FROM `{$this->prefix}monokulo_connection` WHERE `host` = '" . $this->db->escape($host) . "'";
 		$row = $this->db->query($query)->row;
-		if ($row && !array_key_exists('onion_api', $row)) {
+		if ($row && !array_key_exists('last_test_at', $row)) {
 			$this->upgrade();
 			$row = $this->db->query($query)->row;
 		}
@@ -154,6 +159,8 @@ final class Repository implements EntryStore {
 			$row['webhook_secret'],
 			(int)$row['connected_at'],
 			$row['onion_api'],
+			$row['last_test_event_id'],
+			(int)$row['last_test_at'],
 		);
 	}
 
@@ -165,6 +172,14 @@ final class Repository implements EntryStore {
 			"REPLACE INTO `{$this->prefix}monokulo_connection` (`host`, `api`, `onion_api`, `public_key`, `secret_token`, `webhook_secret`, `connected_at`) VALUES ("
 			. implode(', ', [$e($c->host), $e($c->api), $e($c->onionApi), $e($c->publicKey), $e($c->secretToken), $e($c->webhookSecret), (int)$c->connectedAt])
 			. ')'
+		);
+	}
+
+	/** Keeps `eventId` as the last test webhook `host`'s receiver took, at `at`. */
+	public function recordTestWebhook(string $host, string $eventId, int $at): void {
+		$this->db->query(
+			"UPDATE `{$this->prefix}monokulo_connection` SET `last_test_event_id` = '" . $this->db->escape(substr($eventId, 0, 64)) . "', `last_test_at` = " . $at
+			. " WHERE `host` = '" . $this->db->escape($host) . "'"
 		);
 	}
 

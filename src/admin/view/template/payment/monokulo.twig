@@ -108,11 +108,17 @@
                     {% if store.connected %}
                       {{ store.connected }}
                       {% if store.tor %}<br/><span class="text-muted">{{ store.tor }}</span>{% endif %}
+                      <br/><span class="text-muted" id="last-test-{{ store.host }}">{{ store.last_test }}</span>
                     {% else %}
                       {{ text_not_connected }}
                     {% endif %}
                   </td>
                   <td class="text-end">
+                    {% if store.connected %}
+                      <form action="{{ store.test }}" method="post" data-oc-toggle="ajax" class="d-inline">
+                        <button type="submit" class="btn btn-light">{{ button_test }}</button>
+                      </form>
+                    {% endif %}
                     {% if can_connect %}
                       <a href="{{ store.connect }}" class="btn {% if store.connected %}btn-light{% else %}btn-primary{% endif %}">{% if store.connected %}{{ button_reconnect }}{% else %}{{ button_connect }}{% endif %}</a>
                     {% endif %}

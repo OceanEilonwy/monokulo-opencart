@@ -65,18 +65,18 @@ final class UpgradeOverHttpTest extends TestCase {
 		return array_column(Shop::rows("SHOW COLUMNS FROM " . $table), 'Field');
 	}
 
-	/** The tables as a pre-release made them: the connection up to date, and each order with its dashboard page. */
+	/** The tables as a pre-release made them: the connection up to date (as this version makes it), and each order with its dashboard page. */
 	private function preRelease(): void {
-		Shop::exec("ALTER TABLE oc_monokulo_connection ADD `onion_api` VARCHAR(255) NOT NULL DEFAULT '' AFTER `api`, ADD `entry` MEDIUMTEXT NULL, ADD `entry_etag` VARCHAR(255) NOT NULL DEFAULT '', ADD `entry_expires_at` INT(11) NOT NULL DEFAULT 0");
+		Shop::exec("ALTER TABLE oc_monokulo_connection ADD `onion_api` VARCHAR(255) NOT NULL DEFAULT '' AFTER `api`, ADD `entry` MEDIUMTEXT NULL, ADD `entry_etag` VARCHAR(255) NOT NULL DEFAULT '', ADD `entry_expires_at` INT(11) NOT NULL DEFAULT 0, ADD `last_test_event_id` VARCHAR(64) NOT NULL DEFAULT '', ADD `last_test_at` INT(11) NOT NULL DEFAULT 0");
 		Shop::exec("ALTER TABLE oc_monokulo_order ADD `dashboard_url` VARCHAR(1024) NOT NULL DEFAULT '' AFTER `currency`");
 		Shop::exec("UPDATE oc_monokulo_order SET dashboard_url = 'https://pay.example.com/monokulo/stores/s/orders/o'");
 	}
 
 	private function assertUpgraded(): void {
-		$this->assertSame(['host', 'api', 'onion_api', 'public_key', 'secret_token', 'webhook_secret', 'connected_at', 'entry', 'entry_etag', 'entry_expires_at'], $this->columns('oc_monokulo_connection'));
+		$this->assertSame(['host', 'api', 'onion_api', 'public_key', 'secret_token', 'webhook_secret', 'connected_at', 'entry', 'entry_etag', 'entry_expires_at', 'last_test_event_id', 'last_test_at'], $this->columns('oc_monokulo_connection'));
 		$this->assertSame(['seq', 'monokulo_order_id', 'order_id', 'store_id', 'host', 'amount', 'currency', 'created_at'], $this->columns('oc_monokulo_order'), 'nothing added to the orders');
 		$row = Shop::rows("SELECT * FROM oc_monokulo_connection")[0];
-		$this->assertSame(['https://pay.example.com/monokulo/api/v1', '', 'pk_old', 'sk_old'], [$row['api'], $row['onion_api'], $row['public_key'], $row['secret_token']]);
+		$this->assertSame(['https://pay.example.com/monokulo/api/v1', '', 'pk_old', 'sk_old', '', '0'], [$row['api'], $row['onion_api'], $row['public_key'], $row['secret_token'], $row['last_test_event_id'], $row['last_test_at']]);
 	}
 
 	public function test_over_http_an_old_connection_is_still_connected(): void {
@@ -87,6 +87,7 @@ final class UpgradeOverHttpTest extends TestCase {
 		$this->assertSame(200, $settings->status);
 		$this->assertStringContainsString('pk_old', $settings->text(), 'still connected');
 		$this->assertStringNotContainsString('On Tor at', $settings->text(), 'no onion entry until it connects again');
+		$this->assertStringContainsString('No test webhook received yet.', $settings->text());
 		$this->assertUpgraded();
 
 		// Once moved, nothing more to do.
@@ -120,9 +121,17 @@ final class UpgradeOverHttpTest extends TestCase {
 		$this->assertSame('Monokulo: paid in full. In Monokulo: ' . json_decode(Vectors::delivery('order.paid')['body'], true)['_links']['mk:dashboard-order']['href'], end($history)['comment']);
 	}
 
-	/** Monokulo's order.paid for the shop's old order, signed now, over HTTP; the status answered. */
-	private function deliverPaid(): int {
-		$delivery = Vectors::delivery('order.paid');
+	/** A test webhook to a shop whose tables an earlier version made: the columns it's kept in are added first, then it's kept. */
+	public function test_over_http_an_old_connection_keeps_a_test_webhook(): void {
+		$this->assertSame(200, $this->deliverPaid('webhook.test'));
+
+		$this->assertSame('evt_0000000000000012', Shop::rows("SELECT last_test_event_id FROM oc_monokulo_connection")[0]['last_test_event_id']);
+		$this->assertSame('1', Shop::rows("SELECT order_status_id FROM oc_order WHERE order_id = " . $this->orderId)[0]['order_status_id'], 'no order changed');
+	}
+
+	/** Monokulo's delivery `name` (order.paid, for the shop's old order), signed now, over HTTP; the status answered. */
+	private function deliverPaid(string $name = 'order.paid'): int {
+		$delivery = Vectors::delivery($name);
 		$t = time();
 		$headers = ['X-Monokulo-Signature' => 't=' . $t . ',v1=' . hash_hmac('sha256', $t . '.' . $delivery['body'], Vectors::secret()), 'Content-Type' => 'application/json'] + $delivery['headers'];
 

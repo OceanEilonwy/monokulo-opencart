@@ -3,13 +3,20 @@ namespace Opencart\Admin\Controller\Extension\Monokulo\Payment;
 
 require_once __DIR__ . '/../../../system/library/monokulo/autoload.php';
 
+use Monokulo\OpenCart\ApiError;
+use Monokulo\OpenCart\Client;
 use Monokulo\OpenCart\ConnectLink;
+use Monokulo\OpenCart\Logger;
 use Monokulo\OpenCart\Repository;
+use Monokulo\OpenCart\TestWebhookReport;
+use Monokulo\OpenCart\Trace;
+use Monokulo\OpenCart\TransportError;
 use Monokulo\OpenCart\Url;
 
 /**
  * Monokulo's settings page: the Monokulo address, which order status each
- * step of a Monero payment moves an order to, and each store's connection.
+ * step of a Monero payment moves an order to, and each store's connection,
+ * with the last test webhook it received and a button to send one.
  */
 class Monokulo extends \Opencart\System\Engine\Controller {
 	/** The order statuses the merchant chooses, with OpenCart's default ids. */
@@ -78,6 +85,10 @@ class Monokulo extends \Opencart\System\Engine\Controller {
 				'host'      => $host,
 				'connected' => $connection ? sprintf($this->language->get('text_connected_as'), $connection->publicKey, date($this->language->get('datetime_format'), $connection->connectedAt)) : '',
 				'tor'       => $connection && $connection->onionApi !== '' ? sprintf($this->language->get('text_tor'), Url::origin($connection->onionApi)) : '',
+				'last_test' => !$connection ? '' : ($connection->lastTestAt > 0
+					? sprintf($this->language->get('text_last_test'), date($this->language->get('datetime_format'), $connection->lastTestAt), $connection->lastTestEventId)
+					: $this->language->get('text_no_test')),
+				'test'      => $this->url->link('extension/monokulo/payment/monokulo.testWebhook', $token . '&store_id=' . $store['store_id']),
 				'connect'   => $this->url->link('extension/monokulo/payment/monokulo.connect', $token . '&store_id=' . $store['store_id'])
 			];
 		}
@@ -179,6 +190,69 @@ class Monokulo extends \Opencart\System\Engine\Controller {
 		$return_url = $store['url'] . 'index.php?route=extension/monokulo/payment/monokulo.connect';
 
 		$this->redirect(ConnectLink::start($address, $store['url'], $return_url, $nonce));
+	}
+
+	/**
+	 * The Test connection button: follows the API entry's
+	 * `send-test-webhook` form with the store's key, so Monokulo sends the
+	 * shop's webhook a signed `webhook.test` and answers once the shop's
+	 * receiver has, then tells the admin how it went (TestWebhookReport)
+	 * in OpenCart's usual alert. Changes no order.
+	 */
+	public function testWebhook(): void {
+		$this->load->language('extension/monokulo/payment/monokulo');
+
+		$json = [];
+
+		if (!$this->user->hasPermission('modify', 'extension/monokulo/payment/monokulo')) {
+			$json['error']['warning'] = $this->language->get('error_permission');
+		} else {
+			$store_id = (int)($this->request->get['store_id'] ?? -1);
+			$repository = new Repository($this->db, DB_PREFIX);
+			$connection = null;
+
+			foreach ($this->stores() as $store) {
+				if ((int)$store['store_id'] === $store_id) {
+					$connection = $repository->connection(ConnectLink::host($store['url']));
+				}
+			}
+
+			if (!$connection) {
+				$report = TestWebhookReport::notConnected();
+			} else {
+				try {
+					$outcome = (new Client(new Trace(), $repository))->sendTestWebhook($connection);
+					// The receiver ran while Monokulo waited: what it kept is in the database now.
+					$received = $repository->connection($connection->host);
+					$report = TestWebhookReport::fromOutcome($outcome, $received ? $received->lastTestEventId : '');
+				} catch (ApiError|TransportError $e) {
+					$report = TestWebhookReport::fromError($e);
+				}
+			}
+
+			$message = $report->message(fn(string $key): string => $this->language->get($key), $this->language->get('datetime_format'));
+
+			if ($report->ok) {
+				$json['success'] = $message;
+			} else {
+				$json['error']['warning'] = $message;
+
+				if ($connection) {
+					$this->log()->warning('Test connection: ' . html_entity_decode(strip_tags($message), ENT_QUOTES, 'UTF-8'));
+				}
+			}
+		}
+
+		$this->response->addHeader('Content-Type: application/json');
+		$this->response->setOutput(json_encode($json));
+	}
+
+	private function log(): Logger {
+		$file = new \Opencart\System\Library\Log('monokulo.log');
+
+		return new Logger(static function (string $line) use ($file): void {
+			$file->write($line);
+		}, new Trace());
 	}
 
 	/**

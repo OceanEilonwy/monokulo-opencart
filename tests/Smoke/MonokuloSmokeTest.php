@@ -17,6 +17,14 @@ use PHPUnit\Framework\TestCase;
  * 2. saves the Monokulo address in the shop's admin and presses Connect;
  * 3. on Monokulo, sets up the store for the shop, picks the wallet, and
  *    goes back to OpenCart, which redeems the token: connected;
+ * 3a. a test webhook, end to end: the shop's key sends the entry's
+ *    `send-test-webhook` form, Monokulo delivers a signed `webhook.test` to
+ *    the shop's receiver and answers `delivered`; the receiver kept that
+ *    very event id (it keeps one only once the signature checks out), no
+ *    order changed, and the settings page shows it as the last test
+ *    received. Then the admin presses Test connection on the settings
+ *    page, and is told it was delivered. (Two tests: Monokulo takes 6 a
+ *    minute for a store.)
  * 4. a guest buys something with Monero: the shop creates the Monokulo
  *    order through the API and sends them to its checkout page, which
  *    loads; the order, read back through the API with the store's key, is
@@ -63,6 +71,7 @@ final class MonokuloSmokeTest extends TestCase {
 		$this->signUpToMonokulo();
 		$this->connectTheShop();
 		$this->theEntryIsTheStandIns();
+		$this->aTestWebhookReachesTheShop();
 
 		$checkout = $this->buyWithMonero();
 
@@ -164,6 +173,20 @@ final class MonokuloSmokeTest extends TestCase {
 		}
 		$logs = $openapi['paths']['/api/v1/logs']['post'];
 		$this->assertSame(['send-logs', ['sk']], [$logs['x-hal-forms-template'], $logs['x-monokulo-keys']], 'where the shop forwards its errors, with its key');
+
+		// The Test connection button's form, for the shop's key, takes `{}`, and its answer has every field the stand-in's has, delivered or not.
+		$tests = $openapi['paths']['/api/v1/webhook-tests']['post'];
+		$this->assertSame(['send-test-webhook', ['sk']], [$tests['x-hal-forms-template'], $tests['x-monokulo-keys']]);
+		$this->assertSame([], $schema($tests['requestBody']['content']['application/json']['schema'])['required'] ?? [], '{} is a whole request');
+		$outcome = $schema($tests['responses']['200']['content']['application/prs.hal-forms+json']['schema']);
+		foreach ([true, false] as $delivered) {
+			$fixture = FakeMonokulo::testOutcome($delivered);
+			$this->assertSame([], $missing($outcome['required'], $keys($fixture)), 'the stand-in has every required field');
+			$this->assertSame([], $missing($keys($fixture), $keys($outcome['properties'])), 'and no field Monokulo lacks');
+		}
+		foreach (['404' => 'not-found', '429' => 'rate-limited'] as $status => $problem) {
+			$this->assertStringContainsString('problems/' . $problem . ')', $tests['responses'][$status]['description']);
+		}
 	}
 
 	/**
@@ -216,6 +239,22 @@ final class MonokuloSmokeTest extends TestCase {
 			$this->assertSame($hrefs(json_decode(str_replace(FakeMonokulo::STORE_ID, $storeId, (string)json_encode($standIn['_links'])), true)), $hrefs($example['_links']), $name);
 		}
 
+		// A delivered test webhook is the example recorded for it, on both kinds of Monokulo.
+		$outcomes = $examples($openapi['paths']['/api/v1/webhook-tests']['post'], '200', 'application/prs.hal-forms+json');
+		foreach (['sk', 'sk-with-onion'] as $name) {
+			$example = $outcomes[$name];
+			$standIn = FakeMonokulo::testOutcome(eventId: $example['event_id']);
+			$this->assertEqualsCanonicalizing(array_keys($standIn), array_keys($example), $name);
+			$fields = array_diff_key($standIn, ['_links' => 0, '_templates' => 0]);
+			$recorded = array_intersect_key($example, $fields);
+			ksort($fields);
+			ksort($recorded);
+			$this->assertSame($recorded, $fields, $name);
+			$this->assertSame($hrefs($standIn['_links']), $hrefs($example['_links']), $name);
+			$template = $example['_templates']['send-test-webhook'];
+			$this->assertSame(['POST', '/api/v1/webhook-tests', 'application/json'], [$template['method'], $template['target'], $template['contentType']], $name);
+		}
+
 		$finish = $openapi['paths']['/plugins/connect/{slug}/finish']['post'];
 		$connections = $examples($finish, '200', 'application/json');
 		foreach (['no-key' => false, 'no-key-with-onion' => true] as $name => $onion) {
@@ -244,6 +283,45 @@ final class MonokuloSmokeTest extends TestCase {
 				}
 			}
 		}
+	}
+
+	/**
+	 * The test webhook, end to end, through Monokulo's form with the shop's
+	 * key and then through the settings page's Test connection button.
+	 */
+	private function aTestWebhookReachesTheShop(): void {
+		$orders = Shop::rows("SELECT (SELECT COUNT(*) FROM oc_order_history) AS history, (SELECT COUNT(*) FROM oc_monokulo_event) AS events, (SELECT COUNT(*) FROM oc_monokulo_order) AS orders")[0];
+		$this->assertSame('', $this->connection()['last_test_event_id'], 'none received yet');
+
+		// The form, as the entry has it: Monokulo answers once the shop's receiver has.
+		$entry = $this->apiGet($this->connection()['api']);
+		$form = $entry['_templates']['send-test-webhook'];
+		$answer = $this->browser->post($this->monokulo . $form['target'], '{}', ['Authorization' => 'Bearer ' . $this->connection()['secret_token'], 'Content-Type' => 'application/json']);
+		$this->assertSame(200, $answer->status, $answer->body);
+		$outcome = $answer->json();
+		$this->assertTrue($outcome['delivered'], json_encode($outcome));
+		$this->assertGreaterThanOrEqual(200, $outcome['status']);
+		$this->assertLessThan(300, $outcome['status']);
+		$this->assertMatchesRegularExpression('/\Aevt_[0-9a-f]+\z/', $outcome['event_id']);
+		$this->assertEqualsCanonicalizing(array_keys(FakeMonokulo::testOutcome()), array_keys($outcome), 'the stand-in\'s outcome has the same fields');
+
+		// The receiver checked the signature and kept that very event; nothing about orders changed.
+		$this->assertSame($outcome['event_id'], $this->connection()['last_test_event_id']);
+		$this->assertEqualsWithDelta(time(), (int)$this->connection()['last_test_at'], 30);
+		$this->assertSame($orders, Shop::rows("SELECT (SELECT COUNT(*) FROM oc_order_history) AS history, (SELECT COUNT(*) FROM oc_monokulo_event) AS events, (SELECT COUNT(*) FROM oc_monokulo_order) AS orders")[0], 'no order changed');
+		$this->assertStringContainsString('Test webhook ' . $outcome['event_id'] . ' received: its signature checks out.', Shop::log());
+
+		// The settings page says so, and its Test connection button sends another, delivered.
+		$token = $this->shopAdmin();
+		$settings = $this->browser->get(Shop::adminUrl('extension/monokulo/payment/monokulo', $token));
+		$this->assertStringContainsString('Last test webhook received: ' . date('d/m/Y H:i:s', (int)$this->connection()['last_test_at']) . ' (' . $outcome['event_id'] . ')', $settings->text());
+		$pressed = $this->browser->submit($settings, 'monokulo.testWebhook')->json();
+		$this->assertArrayHasKey('success', $pressed, json_encode($pressed));
+		$again = $this->connection()['last_test_event_id'];
+		$this->assertNotSame($outcome['event_id'], $again, 'a new test');
+		$this->assertMatchesRegularExpression('/\ATest webhook ' . preg_quote($again, '/') . ' delivered: this shop checked its signature and answered HTTP 200 in \d+ ms\. No order changed\.\z/', $pressed['success']);
+		$this->assertStringContainsString('(' . $again . ')', $this->browser->get(Shop::adminUrl('extension/monokulo/payment/monokulo', $token))->text());
+		$this->assertSame($orders, Shop::rows("SELECT (SELECT COUNT(*) FROM oc_order_history) AS history, (SELECT COUNT(*) FROM oc_monokulo_event) AS events, (SELECT COUNT(*) FROM oc_monokulo_order) AS orders")[0], 'still no order changed');
 	}
 
 	/**

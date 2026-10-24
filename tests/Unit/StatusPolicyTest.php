@@ -29,6 +29,11 @@ final class StatusPolicyTest extends TestCase {
 		$seen = [];
 		foreach (Vectors::deliveries() as $name => $delivery) {
 			$event = WebhookEvent::parse($delivery['body']);
+			if ($event->event === WebhookEvent::TEST) {
+				$this->assertNull(StatusPolicy::decide($event), 'a test changes no order');
+
+				continue;
+			}
 			$this->assertArrayHasKey($event->event, self::TABLE, "Monokulo publishes $name, which the table doesn't cover");
 			[$status, $note, $notify] = self::TABLE[$event->event];
 			$decision = StatusPolicy::decide($event);

@@ -13,6 +13,9 @@ namespace Monokulo\OpenCart;
  * client finds every other API address from there. `onionApi` is the same
  * entry on Monokulo's onion address, when it had one as the shop connected
  * (`''` otherwise, and for shops that connected before it was kept).
+ * `lastTestEventId` and `lastTestAt` are the last `webhook.test` the shop's
+ * receiver took for this host (its event id, and when it arrived), or ''
+ * and 0 when none has since it connected.
  */
 final class Connection {
 	public function __construct(
@@ -23,6 +26,8 @@ final class Connection {
 		public readonly string $webhookSecret,
 		public readonly int $connectedAt,
 		public readonly string $onionApi = '',
+		public readonly string $lastTestEventId = '',
+		public readonly int $lastTestAt = 0,
 	) {
 	}
 }

@@ -16,10 +16,14 @@ $_['text_not_connected']        = 'Not connected';
 $_['text_address_first']        = 'Save your Monokulo address first.';
 $_['text_all_zones']            = 'All zones';
 $_['text_connected']            = 'Your store is connected. Monero is now offered at checkout.';
+$_['text_last_test']            = 'Last test webhook received: %s (%s)';
+$_['text_no_test']              = 'No test webhook received yet.';
+$_['text_test_delivered']       = 'Test webhook %s delivered: this shop checked its signature and answered HTTP %d in %d ms. No order changed.';
 
 // Button
 $_['button_connect']            = 'Connect';
 $_['button_reconnect']          = 'Connect again';
+$_['button_test']               = 'Test connection';
 
 // Entry
 $_['entry_address']             = 'Monokulo address';
@@ -51,4 +55,13 @@ $_['error_connect_finish']      = 'Monokulo did not hand over the store\'s keys.
 $_['error_connect_unavailable'] = 'Your Monokulo cannot connect shops yet: its operator has not set its public address.';
 $_['error_connect_busy']        = 'Your Monokulo is busy: wait a minute, then connect again.';
 $_['error_connect_expired']     = 'The connect link expired or was already used: it lasts 10 minutes and works once. Please connect again.';
+$_['error_test_elsewhere']      = 'Monokulo\'s test webhook %s was answered with HTTP %d in %d ms, but not by this shop: the webhook in Monokulo goes somewhere else. Connect the store again to point it here.';
+$_['error_test_retry']          = 'Monokulo\'s test webhook %s was not delivered: %s. Monokulo tries it again at %s.';
+$_['error_test_failed']         = 'Monokulo\'s test webhook %s was not delivered: %s.';
+$_['error_test_rate_limited']   = 'Monokulo sends at most 6 test webhooks a minute for a store. Try again in %d seconds.';
+$_['error_test_not_found']      = 'Monokulo has no webhook for this store to test. Connect the store again, which gives Monokulo this shop\'s webhook address.';
+$_['error_test_key']            = 'Monokulo refused this store\'s key. Connect the store again.';
+$_['error_test_unreachable']    = 'Your Monokulo could not be reached from this shop\'s server: %s.';
+$_['error_test_other']          = 'Monokulo could not send a test webhook: HTTP %d: %s';
+$_['error_test_not_connected']  = 'Connect this store before testing its connection.';
 $_['error_connect_unreachable'] = 'Your Monokulo could not be reached from this shop\'s server. Check the address, then connect again.';
